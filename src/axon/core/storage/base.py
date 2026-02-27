@@ -165,3 +165,7 @@ class StorageBackend(Protocol):
     def remove_relationships_by_type(self, rel_type: RelType) -> None:
         """Delete all relationships of a specific type."""
         ...
+
+    def rebuild_fts_indexes(self) -> None:
+        """Drop and recreate all FTS indexes after bulk data changes."""
+        ...

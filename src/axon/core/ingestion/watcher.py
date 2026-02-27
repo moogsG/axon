@@ -105,8 +105,9 @@ def _compute_dirty_node_ids(storage: StorageBackend, dirty_files: set[str]) -> s
 
     # Collect node IDs from dirty files.
     for file_path in dirty_files:
+        escaped = file_path.replace("\\", "\\\\").replace("'", "\\'")
         results = storage.execute_raw(
-            f"MATCH (n) WHERE n.file_path = '{file_path}' RETURN n.id"
+            f"MATCH (n) WHERE n.file_path = '{escaped}' RETURN n.id"
         )
         for row in results:
             if row[0]:
@@ -260,10 +261,10 @@ async def watch_repo(
             count, reindexed = await _run_sync(
                 _reindex_files, changed_paths, repo_path, storage, gitignore,
             )
-            if count > 0:
+            if reindexed:
                 dirty_files |= reindexed
                 last_change_time = time.monotonic()
-                logger.info("Reindexed %d file(s)", count)
+                logger.info("Reindexed %d file(s), %d paths dirty", count, len(reindexed))
 
         # --- Tier 2: Debounced global phases ---
         now = time.monotonic()
