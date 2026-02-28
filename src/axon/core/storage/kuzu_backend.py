@@ -153,6 +153,62 @@ class KuzuBackend:
                 logger.debug("Failed to remove nodes from table %s", table, exc_info=True)
         return 0
 
+    def get_inbound_cross_file_edges(
+        self, file_path: str, exclude_source_files: set[str] | None = None,
+    ) -> list[GraphRelationship]:
+        """Return inbound edges where target is in *file_path* and source is not.
+
+        Edges whose source file is in *exclude_source_files* are skipped.
+        """
+        assert self._conn is not None
+        exclude = exclude_source_files or set()
+        edges: list[GraphRelationship] = []
+        try:
+            result = self._conn.execute(
+                "MATCH (caller)-[r:CodeRelation]->(n) "
+                "WHERE n.file_path = $fp AND caller.file_path <> $fp "
+                "RETURN caller.id, caller.file_path, n.id, "
+                "r.rel_type, r.confidence, r.role, "
+                "r.step_number, r.strength, r.co_changes, r.symbols",
+                parameters={"fp": file_path},
+            )
+            while result.has_next():
+                row = result.get_next()
+                src_file: str = row[1] or ""
+                if src_file in exclude:
+                    continue
+                src_id: str = row[0] or ""
+                tgt_id: str = row[2] or ""
+                rel_type_str: str = row[3] or ""
+                rel_type = _REL_TYPE_MAP.get(rel_type_str)
+                if rel_type is None:
+                    continue
+                props: dict[str, Any] = {}
+                if row[4] is not None:
+                    props["confidence"] = float(row[4])
+                if row[5] is not None and row[5] != "":
+                    props["role"] = str(row[5])
+                if row[6] is not None and row[6] != 0:
+                    props["step_number"] = int(row[6])
+                if row[7] is not None and row[7] != 0.0:
+                    props["strength"] = float(row[7])
+                if row[8] is not None and row[8] != 0:
+                    props["co_changes"] = int(row[8])
+                if row[9] is not None and row[9] != "":
+                    props["symbols"] = str(row[9])
+                rel_id = f"{rel_type_str}:{src_id}->{tgt_id}"
+                edges.append(GraphRelationship(
+                    id=rel_id, type=rel_type,
+                    source=src_id, target=tgt_id,
+                    properties=props,
+                ))
+        except Exception:
+            logger.debug(
+                "Failed to query inbound cross-file edges for %s",
+                file_path, exc_info=True,
+            )
+        return edges
+
     def get_node(self, node_id: str) -> GraphNode | None:
         """Return a single node by ID, or ``None`` if not found."""
         assert self._conn is not None

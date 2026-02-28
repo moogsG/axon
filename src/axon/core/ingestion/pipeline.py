@@ -27,7 +27,7 @@ from pathlib import Path
 
 from axon.config.ignore import load_gitignore
 from axon.core.graph.graph import KnowledgeGraph
-from axon.core.graph.model import NodeLabel
+from axon.core.graph.model import GraphRelationship, NodeLabel
 from axon.core.embeddings.embedder import embed_graph
 from axon.core.ingestion.calls import process_calls
 from axon.core.ingestion.community import process_communities
@@ -209,6 +209,15 @@ def reindex_files(
     KnowledgeGraph
         The partial in-memory graph containing only the reindexed files.
     """
+    # DETACH DELETE drops inbound edges from unchanged files — save them
+    # before deletion and re-insert after rebuild.
+    changed_files = {entry.path for entry in file_entries}
+    saved_edges: list[GraphRelationship] = []
+    for fp in changed_files:
+        saved_edges.extend(
+            storage.get_inbound_cross_file_edges(fp, exclude_source_files=changed_files)
+        )
+
     for entry in file_entries:
         storage.remove_nodes_by_file(entry.path)
 
@@ -223,6 +232,10 @@ def reindex_files(
 
     storage.add_nodes(list(graph.iter_nodes()))
     storage.add_relationships(list(graph.iter_relationships()))
+
+    if saved_edges:
+        storage.add_relationships(saved_edges)
+
     storage.rebuild_fts_indexes()
 
     return graph

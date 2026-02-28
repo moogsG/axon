@@ -151,7 +151,8 @@ class TypeScriptParser(LanguageParser):
     def _maybe_extract_module_exports(
         self, node: Node, source: str, result: ParseResult
     ) -> None:
-        """Handle ``module.exports = X`` and ``module.exports = { A, B }``."""
+        """Handle ``module.exports = X``, ``module.exports = { A, B }``,
+        and ``exports.name = fn`` / ``module.exports.name = fn``."""
         for child in node.children:
             if child.type != "assignment_expression":
                 continue
@@ -161,20 +162,52 @@ class TypeScriptParser(LanguageParser):
                 continue
 
             left_text = left.text.decode()
-            if left_text not in ("module.exports", "exports"):
+
+            if left_text in ("module.exports", "exports"):
+                if right.type == "identifier":
+                    result.exports.append(right.text.decode())
+                elif right.type == "object":
+                    # module.exports = { Foo, Bar, baz: something }
+                    for prop in right.children:
+                        if prop.type == "shorthand_property_identifier":
+                            result.exports.append(prop.text.decode())
+                        elif prop.type == "pair":
+                            key_node = prop.child_by_field_name("key")
+                            if key_node is not None:
+                                result.exports.append(key_node.text.decode())
                 continue
 
-            if right.type == "identifier":
-                result.exports.append(right.text.decode())
-            elif right.type == "object":
-                # module.exports = { Foo, Bar, baz: something }
-                for prop in right.children:
-                    if prop.type == "shorthand_property_identifier":
-                        result.exports.append(prop.text.decode())
-                    elif prop.type == "pair":
-                        key_node = prop.child_by_field_name("key")
-                        if key_node is not None:
-                            result.exports.append(key_node.text.decode())
+            # exports.X = fn / module.exports.X = fn
+            if left.type != "member_expression":
+                continue
+            obj_node = left.child_by_field_name("object")
+            prop_node = left.child_by_field_name("property")
+            if obj_node is None or prop_node is None:
+                continue
+            obj_text = obj_node.text.decode()
+            if obj_text not in ("exports", "module.exports"):
+                continue
+
+            sym_name = prop_node.text.decode()
+            result.exports.append(sym_name)
+
+            func_node = self._unwrap_to_function(right)
+            if func_node is not None:
+                start_line = child.start_point[0] + 1
+                end_line = child.end_point[0] + 1
+                content = child.text.decode()
+                signature = self._build_function_signature(func_node, sym_name)
+                result.symbols.append(
+                    SymbolInfo(
+                        name=sym_name,
+                        kind="function",
+                        start_line=start_line,
+                        end_line=end_line,
+                        content=content,
+                        signature=signature,
+                    )
+                )
+                self._extract_function_types(func_node, sym_name, result)
 
     def _extract_function_declaration(
         self, node: Node, source: str, result: ParseResult
@@ -642,6 +675,23 @@ class TypeScriptParser(LanguageParser):
         if return_type:
             sig += return_type
         return sig
+
+    @staticmethod
+    def _unwrap_to_function(node: Node) -> Node | None:
+        """Return the underlying function node, unwrapping wrapper calls.
+
+        Handles direct ``arrow_function`` / ``function_expression`` as well as
+        wrapper patterns like ``asyncHandler(async (req, res) => { ... })``.
+        """
+        if node.type in ("arrow_function", "function_expression"):
+            return node
+        if node.type == "call_expression":
+            args = node.child_by_field_name("arguments")
+            if args is not None:
+                for arg in args.children:
+                    if arg.type in ("arrow_function", "function_expression"):
+                        return arg
+        return None
 
     @staticmethod
     def _find_parent_class_name(node: Node) -> str:

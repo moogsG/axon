@@ -65,6 +65,17 @@ class StorageBackend(Protocol):
         """
         ...
 
+    def get_inbound_cross_file_edges(
+        self, file_path: str, exclude_source_files: set[str] | None = None,
+    ) -> list[GraphRelationship]:
+        """Return inbound edges where the target is in *file_path* and the source is not.
+
+        Args:
+            file_path: Target file whose inbound edges to collect.
+            exclude_source_files: Source file paths to skip.
+        """
+        ...
+
     def get_node(self, node_id: str) -> GraphNode | None:
         """Return a single node by ID, or ``None`` if not found."""
         ...

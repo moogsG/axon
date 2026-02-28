@@ -219,6 +219,7 @@ async def watch_repo(
     async for changes in watchfiles.awatch(
         repo_path,
         rust_timeout=_POLL_INTERVAL_MS,
+        yield_on_timeout=True,
         stop_event=stop_event,
     ):
         # --- Tier 1: Immediate file-local reindex ---
