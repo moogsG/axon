@@ -160,8 +160,8 @@ def get_health(request: Request) -> dict:
             "UNION ALL MATCH (n:Class) WHERE n.start_line > 0 "
             "RETURN count(n), sum(CASE WHEN n.is_dead = true THEN 1 ELSE 0 END)"
         )
-        total_symbols = sum(r[0] for r in dc_rows if r and r[0]) or 1
-        dead_count = sum(r[1] for r in dc_rows if r and r[1]) or 0
+        total_symbols = int(sum(r[0] for r in dc_rows if r and r[0]) or 1)
+        dead_count = int(sum(r[1] for r in dc_rows if r and r[1]) or 0)
         breakdown["deadCode"] = round(max(0.0, 100.0 - (dead_count / max(total_symbols, 1) * 100)), 1)
     except Exception:
         logger.warning("Health: dead code query failed", exc_info=True)
