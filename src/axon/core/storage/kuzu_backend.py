@@ -11,7 +11,9 @@ from __future__ import annotations
 import csv
 import hashlib
 import logging
+import math
 import tempfile
+import threading
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -52,6 +54,7 @@ _NODE_PROPERTIES = (
     "is_dead BOOL, "
     "is_entry_point BOOL, "
     "is_exported BOOL, "
+    "cohesion DOUBLE, "
     "PRIMARY KEY (id)"
 )
 
@@ -65,9 +68,26 @@ _REL_PROPERTIES = (
     "symbols STRING"
 )
 
-def _escape(value: str) -> str:
+def escape_cypher(value: str) -> str:
     """Escape a string for safe inclusion in a Cypher literal."""
-    return value.replace("\\", "\\\\").replace("'", "\\'")
+    value = value.replace("\x00", "")
+    value = value.replace("/*", "")
+    value = value.replace("*/", "")
+    value = value.replace("//", "")
+    value = value.replace(";", "")
+    value = value.replace("\\", "\\\\")
+    value = value.replace("'", "\\'")
+    return value
+
+
+def _safe_vec_literal(vector: list[float]) -> str:
+    parts = []
+    for v in vector:
+        f = float(v)
+        if not math.isfinite(f):
+            raise ValueError(f"Non-finite float in embedding vector: {f}")
+        parts.append(repr(f))
+    return "[" + ", ".join(parts) + "]"
 
 def _table_for_id(node_id: str) -> str | None:
     """Extract the table name from a node ID by mapping its label prefix."""
@@ -91,6 +111,12 @@ class KuzuBackend:
     def __init__(self) -> None:
         self._db: kuzu.Database | None = None
         self._conn: kuzu.Connection | None = None
+        self._lock = threading.Lock()
+
+    def _require_conn(self) -> kuzu.Connection:
+        if self._conn is None:
+            raise RuntimeError("KuzuBackend.initialize() must be called before use")
+        return self._conn
 
     def initialize(self, path: Path, *, read_only: bool = False) -> None:
         """Open or create the KuzuDB database at *path* and set up the schema.
@@ -140,18 +166,25 @@ class KuzuBackend:
         """Delete all nodes whose ``file_path`` matches across every table.
 
         Returns:
-            Always 0 — exact count is not tracked for performance.
+            The number of nodes removed.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
+        total = 0
         for table in _NODE_TABLE_NAMES:
             try:
-                self._conn.execute(
+                count_result = conn.execute(
+                    f"MATCH (n:{table}) WHERE n.file_path = $fp RETURN count(n)",
+                    parameters={"fp": file_path},
+                )
+                if count_result.has_next():
+                    total += int(count_result.get_next()[0] or 0)
+                conn.execute(
                     f"MATCH (n:{table}) WHERE n.file_path = $fp DETACH DELETE n",
                     parameters={"fp": file_path},
                 )
             except Exception:
                 logger.debug("Failed to remove nodes from table %s", table, exc_info=True)
-        return 0
+        return total
 
     def get_inbound_cross_file_edges(
         self, file_path: str, exclude_source_files: set[str] | None = None,
@@ -160,18 +193,19 @@ class KuzuBackend:
 
         Edges whose source file is in *exclude_source_files* are skipped.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         exclude = exclude_source_files or set()
         edges: list[GraphRelationship] = []
         try:
-            result = self._conn.execute(
-                "MATCH (caller)-[r:CodeRelation]->(n) "
-                "WHERE n.file_path = $fp AND caller.file_path <> $fp "
-                "RETURN caller.id, caller.file_path, n.id, "
-                "r.rel_type, r.confidence, r.role, "
-                "r.step_number, r.strength, r.co_changes, r.symbols",
-                parameters={"fp": file_path},
-            )
+            with self._lock:
+                result = conn.execute(
+                    "MATCH (caller)-[r:CodeRelation]->(n) "
+                    "WHERE n.file_path = $fp AND caller.file_path <> $fp "
+                    "RETURN caller.id, caller.file_path, n.id, "
+                    "r.rel_type, r.confidence, r.role, "
+                    "r.step_number, r.strength, r.co_changes, r.symbols",
+                    parameters={"fp": file_path},
+                )
             while result.has_next():
                 row = result.get_next()
                 src_file: str = row[1] or ""
@@ -203,7 +237,7 @@ class KuzuBackend:
                     properties=props,
                 ))
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Failed to query inbound cross-file edges for %s",
                 file_path, exc_info=True,
             )
@@ -211,24 +245,25 @@ class KuzuBackend:
 
     def get_node(self, node_id: str) -> GraphNode | None:
         """Return a single node by ID, or ``None`` if not found."""
-        assert self._conn is not None
+        conn = self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return None
 
         query = f"MATCH (n:{table}) WHERE n.id = $nid RETURN n.*"
         try:
-            result = self._conn.execute(query, parameters={"nid": node_id})
+            with self._lock:
+                result = conn.execute(query, parameters={"nid": node_id})
             if result.has_next():
                 row = result.get_next()
                 return self._row_to_node(row, node_id)
         except Exception:
-            logger.debug("get_node failed for %s", node_id, exc_info=True)
+            logger.warning("get_node failed for %s", node_id, exc_info=True)
         return None
 
     def get_callers(self, node_id: str) -> list[GraphNode]:
         """Return nodes that CALL the node identified by *node_id*."""
-        assert self._conn is not None
+        self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return []
@@ -242,7 +277,7 @@ class KuzuBackend:
 
     def get_callees(self, node_id: str) -> list[GraphNode]:
         """Return nodes called by the node identified by *node_id*."""
-        assert self._conn is not None
+        self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return []
@@ -256,7 +291,7 @@ class KuzuBackend:
 
     def get_type_refs(self, node_id: str) -> list[GraphNode]:
         """Return nodes referenced via USES_TYPE from *node_id*."""
-        assert self._conn is not None
+        self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return []
@@ -270,7 +305,7 @@ class KuzuBackend:
 
     def get_callers_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
         """Return ``(node, confidence)`` for all callers of *node_id*."""
-        assert self._conn is not None
+        self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return []
@@ -283,7 +318,7 @@ class KuzuBackend:
 
     def get_callees_with_confidence(self, node_id: str) -> list[tuple[GraphNode, float]]:
         """Return ``(node, confidence)`` for all callees of *node_id*."""
-        assert self._conn is not None
+        self._require_conn()
         table = _table_for_id(node_id)
         if table is None:
             return []
@@ -311,7 +346,7 @@ class KuzuBackend:
             direction: ``"callers"`` follows incoming CALLS (blast radius),
                        ``"callees"`` follows outgoing CALLS (dependencies).
         """
-        assert self._conn is not None
+        self._require_conn()
         depth = min(depth, self._MAX_BFS_DEPTH)
         if _table_for_id(start_id) is None:
             return []
@@ -348,18 +383,19 @@ class KuzuBackend:
 
         Uses parameterized IN clause to safely query all node IDs at once.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         if not node_ids:
             return {}
 
         mapping: dict[str, str] = {}
         try:
-            result = self._conn.execute(
-                "MATCH (n)-[r:CodeRelation]->(p:Process) "
-                "WHERE n.id IN $ids AND r.rel_type = 'step_in_process' "
-                "RETURN n.id, p.name",
-                parameters={"ids": node_ids},
-            )
+            with self._lock:
+                result = conn.execute(
+                    "MATCH (n)-[r:CodeRelation]->(p:Process) "
+                    "WHERE n.id IN $ids AND r.rel_type = 'step_in_process' "
+                    "RETURN n.id, p.name",
+                    parameters={"ids": node_ids},
+                )
             while result.has_next():
                 row = result.get_next()
                 nid = row[0] if row else ""
@@ -367,13 +403,14 @@ class KuzuBackend:
                 if nid and pname and nid not in mapping:
                     mapping[nid] = pname
         except Exception:
-            logger.debug("get_process_memberships failed", exc_info=True)
+            logger.warning("get_process_memberships failed", exc_info=True)
         return mapping
 
     def execute_raw(self, query: str) -> list[list[Any]]:
         """Execute a raw Cypher query and return all result rows."""
-        assert self._conn is not None
-        result = self._conn.execute(query)
+        conn = self._require_conn()
+        with self._lock:
+            result = conn.execute(query)
         rows: list[list[Any]] = []
         while result.has_next():
             rows.append(result.get_next())
@@ -385,7 +422,8 @@ class KuzuBackend:
         Returns results sorted by label priority (functions/methods first),
         preferring source files over test files.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
+        limit = int(limit)
         candidates: list[SearchResult] = []
 
         for table in _SEARCHABLE_TABLES:
@@ -395,7 +433,8 @@ class KuzuBackend:
                 f"LIMIT {limit}"
             )
             try:
-                result = self._conn.execute(cypher, parameters={"name": name})
+                with self._lock:
+                    result = conn.execute(cypher, parameters={"name": name})
                 while result.has_next():
                     row = result.get_next()
                     node_id = row[0] or ""
@@ -431,10 +470,14 @@ class KuzuBackend:
 
         Returns the top *limit* results sorted by score descending.
         """
-        assert self._conn is not None
-        escaped_q = _escape(query)
+        conn = self._require_conn()
+        limit = int(limit)
+        escaped_q = escape_cypher(query)
         candidates: list[SearchResult] = []
 
+        # NOTE: QUERY_FTS_INDEX is a KuzuDB stored procedure that does not support
+        # parameterized $variables. String interpolation with escape_cypher() is the
+        # only option here. escape_cypher strips comments, semicolons, and escapes quotes.
         for table in _SEARCHABLE_TABLES:
             idx_name = f"{table.lower()}_fts"
             cypher = (
@@ -444,7 +487,8 @@ class KuzuBackend:
                 f"ORDER BY score DESC LIMIT {limit}"
             )
             try:
-                result = self._conn.execute(cypher)
+                with self._lock:
+                    result = conn.execute(cypher)
                 while result.has_next():
                     row = result.get_next()
                     node_id = row[0] or ""
@@ -491,20 +535,25 @@ class KuzuBackend:
         *max_distance* edits of *query*.  Converts edit distance to a
         score (0 edits = 1.0, *max_distance* edits = 0.3).
         """
-        assert self._conn is not None
-        escaped_q = _escape(query.lower())
+        conn = self._require_conn()
+        limit = int(limit)
+        max_distance = int(max_distance)
         candidates: list[SearchResult] = []
 
         for table in _SEARCHABLE_TABLES:
             cypher = (
                 f"MATCH (n:{table}) "
-                f"WHERE levenshtein(lower(n.name), '{escaped_q}') <= {max_distance} "
+                f"WHERE levenshtein(lower(n.name), $q) <= $dist "
                 f"RETURN n.id, n.name, n.file_path, n.content, "
-                f"levenshtein(lower(n.name), '{escaped_q}') AS dist "
-                f"ORDER BY dist LIMIT {limit}"
+                f"levenshtein(lower(n.name), $q) AS dist "
+                f"ORDER BY dist LIMIT $lim"
             )
             try:
-                result = self._conn.execute(cypher)
+                with self._lock:
+                    result = conn.execute(
+                        cypher,
+                        parameters={"q": query.lower(), "dist": max_distance, "lim": limit},
+                    )
                 while result.has_next():
                     row = result.get_next()
                     node_id = row[0] or ""
@@ -537,7 +586,7 @@ class KuzuBackend:
 
         Attempts batch CSV COPY FROM first, falls back to individual MERGE.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         if not embeddings:
             return
 
@@ -546,7 +595,7 @@ class KuzuBackend:
 
         for emb in embeddings:
             try:
-                self._conn.execute(
+                conn.execute(
                     "MERGE (e:Embedding {node_id: $nid}) SET e.vec = $vec",
                     parameters={"nid": emb.node_id, "vec": emb.embedding},
                 )
@@ -562,18 +611,18 @@ class KuzuBackend:
         no Python-side computation or full-table load required.  Joins with
         node tables to fetch metadata in a single query.
         """
-        assert self._conn is not None
-        # Vector literals must be inlined — KuzuDB parameterized queries
-        # cannot distinguish DOUBLE[] from LIST for array_cosine_similarity.
-        vec_literal = "[" + ", ".join(str(v) for v in vector) + "]"
+        conn = self._require_conn()
+        limit = int(limit)
+        vec_literal = _safe_vec_literal(vector)
 
         try:
-            result = self._conn.execute(
-                f"MATCH (e:Embedding) "
-                f"RETURN e.node_id, "
-                f"array_cosine_similarity(e.vec, {vec_literal}) AS sim "
-                f"ORDER BY sim DESC LIMIT {limit}"
-            )
+            with self._lock:
+                result = conn.execute(
+                    f"MATCH (e:Embedding) "
+                    f"RETURN e.node_id, "
+                    f"array_cosine_similarity(e.vec, {vec_literal}) AS sim "
+                    f"ORDER BY sim DESC LIMIT {limit}"
+                )
         except Exception:
             logger.debug("vector_search failed", exc_info=True)
             return []
@@ -597,7 +646,8 @@ class KuzuBackend:
         for table, ids in ids_by_table.items():
             try:
                 q = f"MATCH (n:{table}) WHERE n.id IN $ids RETURN n.*"
-                res = self._conn.execute(q, parameters={"ids": ids})
+                with self._lock:
+                    res = conn.execute(q, parameters={"ids": ids})
                 while res.has_next():
                     row = res.get_next()
                     node = self._row_to_node(row)
@@ -629,12 +679,13 @@ class KuzuBackend:
         to computing the hash from content for databases that predate the
         schema addition.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         mapping: dict[str, str] = {}
         try:
-            result = self._conn.execute(
-                "MATCH (n:File) RETURN n.file_path, n.content"
-            )
+            with self._lock:
+                result = conn.execute(
+                    "MATCH (n:File) RETURN n.file_path, n.content"
+                )
             while result.has_next():
                 row = result.get_next()
                 fp = row[0] or ""
@@ -646,13 +697,14 @@ class KuzuBackend:
 
     def load_graph(self) -> KnowledgeGraph:
         """Reconstruct a full :class:`KnowledgeGraph` from the database."""
-        assert self._conn is not None
+        conn = self._require_conn()
         graph = KnowledgeGraph()
 
         # -- Load nodes from every table --
         for table in _NODE_TABLE_NAMES:
             try:
-                result = self._conn.execute(f"MATCH (n:{table}) RETURN n.*")
+                with self._lock:
+                    result = conn.execute(f"MATCH (n:{table}) RETURN n.*")
                 while result.has_next():
                     row = result.get_next()
                     node = self._row_to_node(row)
@@ -663,11 +715,12 @@ class KuzuBackend:
 
         # -- Load relationships --
         try:
-            result = self._conn.execute(
-                "MATCH (a)-[r:CodeRelation]->(b) "
-                "RETURN a.id, b.id, r.rel_type, r.confidence, r.role, "
-                "r.step_number, r.strength, r.co_changes, r.symbols"
-            )
+            with self._lock:
+                result = conn.execute(
+                    "MATCH (a)-[r:CodeRelation]->(b) "
+                    "RETURN a.id, b.id, r.rel_type, r.confidence, r.role, "
+                    "r.step_number, r.strength, r.co_changes, r.symbols"
+                )
             while result.has_next():
                 row = result.get_next()
                 src_id: str = row[0] or ""
@@ -711,10 +764,10 @@ class KuzuBackend:
 
     def delete_synthetic_nodes(self) -> None:
         """Remove all COMMUNITY and PROCESS nodes and their relationships."""
-        assert self._conn is not None
+        conn = self._require_conn()
         for table in ("Community", "Process"):
             try:
-                self._conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
+                conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
             except Exception:
                 logger.debug(
                     "delete_synthetic_nodes: failed for %s", table, exc_info=True
@@ -722,10 +775,10 @@ class KuzuBackend:
 
     def upsert_embeddings(self, embeddings: list[NodeEmbedding]) -> None:
         """Insert or update embeddings without wiping existing ones."""
-        assert self._conn is not None
+        conn = self._require_conn()
         for emb in embeddings:
             try:
-                self._conn.execute(
+                conn.execute(
                     "MERGE (e:Embedding {node_id: $nid}) SET e.vec = $vec",
                     parameters={"nid": emb.node_id, "vec": emb.embedding},
                 )
@@ -738,7 +791,7 @@ class KuzuBackend:
         self, dead_ids: set[str], alive_ids: set[str]
     ) -> None:
         """Set is_dead=True on *dead_ids* and is_dead=False on *alive_ids*."""
-        assert self._conn is not None
+        conn = self._require_conn()
 
         def _batch_set(ids: set[str], value: bool) -> None:
             by_table: dict[str, list[str]] = {}
@@ -748,7 +801,7 @@ class KuzuBackend:
                     by_table.setdefault(table, []).append(node_id)
             for table, id_list in by_table.items():
                 try:
-                    self._conn.execute(
+                    conn.execute(
                         f"MATCH (n:{table}) WHERE n.id IN $ids SET n.is_dead = $val",
                         parameters={"ids": id_list, "val": value},
                     )
@@ -762,9 +815,9 @@ class KuzuBackend:
 
     def remove_relationships_by_type(self, rel_type: RelType) -> None:
         """Delete all relationships of a specific type."""
-        assert self._conn is not None
+        conn = self._require_conn()
         try:
-            self._conn.execute(
+            conn.execute(
                 "MATCH ()-[r:CodeRelation]->() WHERE r.rel_type = $rt DELETE r",
                 parameters={"rt": rel_type.value},
             )
@@ -781,10 +834,10 @@ class KuzuBackend:
         Uses CSV-based COPY FROM for bulk loading nodes and relationships,
         falling back to individual inserts if COPY FROM fails.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         for table in _NODE_TABLE_NAMES:
             try:
-                self._conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
+                conn.execute(f"MATCH (n:{table}) DETACH DELETE n")
             except Exception:
                 pass
 
@@ -802,15 +855,15 @@ class KuzuBackend:
         Must be called after any bulk data change so the BM25 indexes
         reflect the current node contents.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         for table in _NODE_TABLE_NAMES:
             idx_name = f"{table.lower()}_fts"
             try:
-                self._conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
+                conn.execute(f"CALL DROP_FTS_INDEX('{table}', '{idx_name}')")
             except Exception:
                 pass
             try:
-                self._conn.execute(
+                conn.execute(
                     f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
                     f"['name', 'content', 'signature'])"
                 )
@@ -822,7 +875,7 @@ class KuzuBackend:
 
         Always cleans up the temp file, even on failure.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         csv_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -831,7 +884,7 @@ class KuzuBackend:
                 writer = csv.writer(f)
                 writer.writerows(rows)
                 csv_path = f.name
-            self._conn.execute(f'COPY {table} FROM "{csv_path}" (HEADER=false)')
+            conn.execute(f'COPY {table} FROM "{csv_path}" (HEADER=false)')
         finally:
             if csv_path:
                 Path(csv_path).unlink(missing_ok=True)
@@ -853,7 +906,7 @@ class KuzuBackend:
                     [node.id, node.name, node.file_path, node.start_line,
                      node.end_line, node.content, node.signature, node.language,
                      node.class_name, node.is_dead, node.is_entry_point,
-                     node.is_exported]
+                     node.is_exported, (node.properties or {}).get("cohesion")]
                     for node in nodes
                 ])
             return True
@@ -895,12 +948,18 @@ class KuzuBackend:
 
         Returns True on success, False if COPY FROM is not available.
         """
-        assert self._conn is not None
+        conn = self._require_conn()
         try:
-            try:
-                self._conn.execute("MATCH (e:Embedding) DETACH DELETE e")
-            except Exception:
-                pass
+            current_ids = [emb.node_id for emb in embeddings]
+            for i in range(0, len(current_ids), 500):
+                batch = current_ids[i:i + 500]
+                try:
+                    conn.execute(
+                        "MATCH (e:Embedding) WHERE e.node_id IN $ids DETACH DELETE e",
+                        parameters={"ids": batch},
+                    )
+                except Exception:
+                    pass
 
             self._csv_copy("Embedding", [
                 [emb.node_id,
@@ -914,19 +973,19 @@ class KuzuBackend:
 
     def _create_schema(self) -> None:
         """Create node/rel/embedding tables and the FTS extension."""
-        assert self._conn is not None
+        conn = self._require_conn()
 
         try:
-            self._conn.execute("INSTALL fts")
-            self._conn.execute("LOAD EXTENSION fts")
+            conn.execute("INSTALL fts")
+            conn.execute("LOAD EXTENSION fts")
         except Exception:
             logger.debug("FTS extension load skipped (may already be loaded)", exc_info=True)
 
         for table in _NODE_TABLE_NAMES:
             stmt = f"CREATE NODE TABLE IF NOT EXISTS {table}({_NODE_PROPERTIES})"
-            self._conn.execute(stmt)
+            conn.execute(stmt)
 
-        self._conn.execute(
+        conn.execute(
             f"CREATE NODE TABLE IF NOT EXISTS Embedding({_EMBEDDING_PROPERTIES})"
         )
 
@@ -942,7 +1001,7 @@ class KuzuBackend:
             f"{pairs_clause}, {_REL_PROPERTIES})"
         )
         try:
-            self._conn.execute(rel_stmt)
+            conn.execute(rel_stmt)
         except Exception:
             logger.debug("REL TABLE GROUP creation skipped", exc_info=True)
 
@@ -950,21 +1009,20 @@ class KuzuBackend:
 
     def _create_fts_indexes(self) -> None:
         """Create FTS indexes for every node table (idempotent)."""
-        assert self._conn is not None
+        conn = self._require_conn()
         for table in _NODE_TABLE_NAMES:
             idx_name = f"{table.lower()}_fts"
             try:
-                self._conn.execute(
+                conn.execute(
                     f"CALL CREATE_FTS_INDEX('{table}', '{idx_name}', "
                     f"['name', 'content', 'signature'])"
                 )
             except Exception:
-                # Index may already exist — that's fine.
                 pass
 
     def _insert_node(self, node: GraphNode) -> None:
         """INSERT a single node into the appropriate label table using parameterized query."""
-        assert self._conn is not None
+        conn = self._require_conn()
         table = _LABEL_TO_TABLE.get(node.label.value)
         if table is None:
             logger.warning("Unknown label %s for node %s", node.label, node.id)
@@ -977,9 +1035,10 @@ class KuzuBackend:
             f"content: $content, signature: $signature, "
             f"language: $language, class_name: $class_name, "
             f"is_dead: $is_dead, is_entry_point: $is_entry_point, "
-            f"is_exported: $is_exported"
+            f"is_exported: $is_exported, cohesion: $cohesion"
             f"}})"
         )
+        props = node.properties or {}
         params = {
             "id": node.id,
             "name": node.name,
@@ -993,15 +1052,16 @@ class KuzuBackend:
             "is_dead": node.is_dead,
             "is_entry_point": node.is_entry_point,
             "is_exported": node.is_exported,
+            "cohesion": props.get("cohesion"),
         }
         try:
-            self._conn.execute(query, parameters=params)
+            conn.execute(query, parameters=params)
         except Exception:
             logger.debug("Insert node failed for %s", node.id, exc_info=True)
 
     def _insert_relationship(self, rel: GraphRelationship) -> None:
         """MATCH source and target, then CREATE the relationship using parameterized query."""
-        assert self._conn is not None
+        conn = self._require_conn()
         src_table = _table_for_id(rel.source)
         tgt_table = _table_for_id(rel.target)
         if src_table is None or tgt_table is None:
@@ -1039,7 +1099,7 @@ class KuzuBackend:
             "symbols": str(props.get("symbols", "")),
         }
         try:
-            self._conn.execute(query, parameters=params)
+            conn.execute(query, parameters=params)
         except Exception:
             logger.debug(
                 "Insert relationship failed: %s -> %s", rel.source, rel.target, exc_info=True
@@ -1049,27 +1109,29 @@ class KuzuBackend:
         self, query: str, parameters: dict[str, Any] | None = None
     ) -> list[GraphNode]:
         """Execute a query returning ``n.*`` columns and convert to GraphNode list."""
-        assert self._conn is not None
+        conn = self._require_conn()
         nodes: list[GraphNode] = []
         try:
-            result = self._conn.execute(query, parameters=parameters or {})
+            with self._lock:
+                result = conn.execute(query, parameters=parameters or {})
             while result.has_next():
                 row = result.get_next()
                 node = self._row_to_node(row)
                 if node is not None:
                     nodes.append(node)
         except Exception:
-            logger.debug("_query_nodes failed: %s", query, exc_info=True)
+            logger.warning("_query_nodes failed: %s", query, exc_info=True)
         return nodes
 
     def _query_nodes_with_confidence(
         self, query: str, parameters: dict[str, Any] | None = None
     ) -> list[tuple[GraphNode, float]]:
         """Execute a query returning ``n.*`` columns plus a trailing confidence column."""
-        assert self._conn is not None
+        conn = self._require_conn()
         pairs: list[tuple[GraphNode, float]] = []
         try:
-            result = self._conn.execute(query, parameters=parameters or {})
+            with self._lock:
+                result = conn.execute(query, parameters=parameters or {})
             while result.has_next():
                 row = result.get_next()
                 node = self._row_to_node(row[:-1])
@@ -1077,7 +1139,7 @@ class KuzuBackend:
                 if node is not None:
                     pairs.append((node, confidence))
         except Exception:
-            logger.debug("_query_nodes_with_confidence failed: %s", query, exc_info=True)
+            logger.warning("_query_nodes_with_confidence failed: %s", query, exc_info=True)
         return pairs
 
     @staticmethod
@@ -1087,7 +1149,7 @@ class KuzuBackend:
         Column order matches the property definition:
         0=id, 1=name, 2=file_path, 3=start_line, 4=end_line,
         5=content, 6=signature, 7=language, 8=class_name,
-        9=is_dead, 10=is_entry_point, 11=is_exported
+        9=is_dead, 10=is_entry_point, 11=is_exported, 12=cohesion
         """
         try:
             nid = node_id or row[0]
@@ -1096,6 +1158,10 @@ class KuzuBackend:
             if label is None:
                 logger.warning("Unknown node label prefix %r in id %s", prefix, nid)
                 return None
+
+            props: dict[str, Any] = {}
+            if len(row) > 12 and row[12] is not None:
+                props["cohesion"] = float(row[12])
 
             return GraphNode(
                 id=row[0],
@@ -1111,6 +1177,7 @@ class KuzuBackend:
                 is_dead=bool(row[9]),
                 is_entry_point=bool(row[10]),
                 is_exported=bool(row[11]),
+                properties=props,
             )
         except (IndexError, KeyError):
             logger.debug("Failed to convert row to GraphNode: %s", row, exc_info=True)

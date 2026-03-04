@@ -1,5 +1,3 @@
-"""Tests for the watch mode module (watcher.py)."""
-
 from __future__ import annotations
 
 import subprocess
@@ -13,16 +11,10 @@ from axon.core.ingestion.watcher import (
     _get_head_sha,
     _compute_dirty_node_ids,
     _run_incremental_global_phases,
-    QUIET_PERIOD,
 )
 from axon.core.graph.model import NodeLabel
 from axon.core.ingestion.walker import FileEntry, read_file
 from axon.core.storage.kuzu_backend import KuzuBackend
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -56,14 +48,7 @@ def storage(tmp_path: Path) -> KuzuBackend:
     backend.close()
 
 
-# ---------------------------------------------------------------------------
-# Tests: _read_file_entry
-# ---------------------------------------------------------------------------
-
-
 class TestReadFileEntry:
-    """_read_file_entry reads a file and returns a FileEntry."""
-
     def test_reads_python_file(self, tmp_repo: Path) -> None:
         entry = read_file(tmp_repo, tmp_repo / "src" / "app.py")
 
@@ -94,14 +79,7 @@ class TestReadFileEntry:
         assert entry is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: reindex_files (pipeline function)
-# ---------------------------------------------------------------------------
-
-
 class TestReindexFiles:
-    """reindex_files() correctly removes old nodes and adds new ones."""
-
     def test_reindex_updates_content(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -184,14 +162,7 @@ class TestReindexFiles:
         assert storage.get_node("function:src/app.py:hello") is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _reindex_files (watcher helper)
-# ---------------------------------------------------------------------------
-
-
 class TestWatcherReindexFiles:
-    """_reindex_files filters and processes changed paths."""
-
     def test_reindexes_changed_files(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -251,8 +222,8 @@ class TestWatcherReindexFiles:
 
         count, _paths = _reindex_files([deleted_path], tmp_repo, storage)
 
-        # Returns 0 because file no longer exists (was handled as deletion).
-        assert count == 0
+        # Returns 1: the deleted file was processed (nodes removed from storage).
+        assert count == 1
 
     def test_handles_multiple_files(
         self, tmp_repo: Path, storage: KuzuBackend
@@ -278,14 +249,7 @@ class TestWatcherReindexFiles:
         assert count == 2
 
 
-# ---------------------------------------------------------------------------
-# Tests: _get_head_sha
-# ---------------------------------------------------------------------------
-
-
 class TestGetHeadSha:
-    """_get_head_sha returns the current git HEAD."""
-
     def test_returns_sha_in_git_repo(self, tmp_repo: Path) -> None:
         import os
 
@@ -313,14 +277,7 @@ class TestGetHeadSha:
         assert sha is None
 
 
-# ---------------------------------------------------------------------------
-# Tests: _reindex_files return type
-# ---------------------------------------------------------------------------
-
-
 class TestReindexFilesReturnType:
-    """_reindex_files returns (count, set_of_paths)."""
-
     def test_returns_count_and_paths(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -332,14 +289,7 @@ class TestReindexFilesReturnType:
         assert "src/app.py" in paths
 
 
-# ---------------------------------------------------------------------------
-# Tests: _compute_dirty_node_ids
-# ---------------------------------------------------------------------------
-
-
 class TestComputeDirtyNodeIds:
-    """_compute_dirty_node_ids finds nodes in dirty files + their CALLS neighbors."""
-
     def test_includes_dirty_file_nodes(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -356,18 +306,10 @@ class TestComputeDirtyNodeIds:
         assert result == set()
 
 
-# ---------------------------------------------------------------------------
-# Tests: _run_incremental_global_phases
-# ---------------------------------------------------------------------------
-
-
 class TestRunIncrementalGlobalPhases:
-    """Integration test: stale synthetic nodes are not re-persisted."""
-
     def test_no_stale_synthetic_nodes_after_rerun(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
-        """Run global phases twice; verify old communities don't survive."""
         run_pipeline(tmp_repo, storage, full=True, embeddings=False)
 
         # First incremental run — should create communities.

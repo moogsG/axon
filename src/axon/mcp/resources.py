@@ -33,7 +33,9 @@ def get_overview(storage: StorageBackend) -> str:
             lines.append("Node counts by type:")
             total = 0
             for row in rows:
-                label = row[0] if row else "Unknown"
+                # KuzuDB returns labels(n) as a list, e.g. ["Function"].
+                raw_label = row[0] if row else "Unknown"
+                label = raw_label[0] if isinstance(raw_label, list) and raw_label else str(raw_label)
                 count = row[1] if len(row) > 1 else 0
                 lines.append(f"  {label}: {count}")
                 total += count
@@ -65,6 +67,26 @@ def get_overview(storage: StorageBackend) -> str:
 
     return "\n".join(lines)
 
+def get_dead_code_symbols(storage: StorageBackend) -> list:
+    """Return raw dead-code rows: ``(id, name, file_path, start_line, label)``.
+
+    Shared query used by both the MCP resource formatter and the web API.
+    Raises on storage errors — callers decide how to handle failures.
+
+    Args:
+        storage: The storage backend.
+
+    Returns:
+        List of result tuples, or an empty list if none found.
+    """
+    rows = storage.execute_raw(
+        "MATCH (n) WHERE n.is_dead = true "
+        "RETURN n.id, n.name, n.file_path, n.start_line, label(n) "
+        "ORDER BY n.file_path"
+    )
+    return rows or []
+
+
 def get_dead_code_list(storage: StorageBackend) -> str:
     """Generate a formatted list of all dead code in the codebase.
 
@@ -75,10 +97,7 @@ def get_dead_code_list(storage: StorageBackend) -> str:
         Formatted list of symbols flagged as dead code.
     """
     try:
-        rows = storage.execute_raw(
-            "MATCH (n) WHERE n.is_dead = true "
-            "RETURN n.name, n.file_path, n.start_line ORDER BY n.file_path"
-        )
+        rows = get_dead_code_symbols(storage)
     except Exception:
         return "Could not retrieve dead code list."
 
@@ -88,9 +107,9 @@ def get_dead_code_list(storage: StorageBackend) -> str:
     lines = [f"Dead Code Report ({len(rows)} symbols)", "-" * 40, ""]
     current_file = ""
     for row in rows:
-        name = row[0] if row else "?"
-        file_path = row[1] if len(row) > 1 else "?"
-        start_line = row[2] if len(row) > 2 else "?"
+        name = row[1] if len(row) > 1 else "?"
+        file_path = row[2] if len(row) > 2 else "?"
+        start_line = row[3] if len(row) > 3 else "?"
         if file_path != current_file:
             if current_file:
                 lines.append("")

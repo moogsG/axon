@@ -1,5 +1,3 @@
-"""Tests for the in-memory KnowledgeGraph."""
-
 from __future__ import annotations
 
 import pytest
@@ -12,18 +10,10 @@ from axon.core.graph.model import (
     RelType,
     generate_id,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
     """Return a fresh, empty KnowledgeGraph."""
     return KnowledgeGraph()
-
 
 def _make_node(
     label: NodeLabel = NodeLabel.FUNCTION,
@@ -38,7 +28,6 @@ def _make_node(
         file_path=file_path,
     )
 
-
 def _make_rel(
     source: str,
     target: str,
@@ -52,13 +41,6 @@ def _make_rel(
         source=source,
         target=target,
     )
-
-
-# ---------------------------------------------------------------------------
-# Node CRUD
-# ---------------------------------------------------------------------------
-
-
 class TestAddGetNode:
     def test_add_and_get_node(self, graph: KnowledgeGraph) -> None:
         node = _make_node()
@@ -81,13 +63,6 @@ class TestAddGetNode:
         graph.add_node(n1)
         graph.add_node(n2)
         assert set(n.id for n in list(graph.iter_nodes())) == {n1.id, n2.id}
-
-
-# ---------------------------------------------------------------------------
-# Relationship CRUD
-# ---------------------------------------------------------------------------
-
-
 class TestAddRelationship:
     def test_add_relationship(self, graph: KnowledgeGraph) -> None:
         n1 = _make_node(name="caller")
@@ -114,13 +89,6 @@ class TestAddRelationship:
         graph.add_relationship(r2)
 
         assert set(r.id for r in list(graph.iter_relationships())) == {"r1", "r2"}
-
-
-# ---------------------------------------------------------------------------
-# Remove node
-# ---------------------------------------------------------------------------
-
-
 class TestRemoveNode:
     def test_remove_existing_node_returns_true(self, graph: KnowledgeGraph) -> None:
         node = _make_node()
@@ -152,13 +120,6 @@ class TestRemoveNode:
 
         remaining_ids = {r.id for r in list(graph.iter_relationships())}
         assert remaining_ids == {"r3"}, f"Expected only r3, got {remaining_ids}"
-
-
-# ---------------------------------------------------------------------------
-# Remove nodes by file
-# ---------------------------------------------------------------------------
-
-
 class TestRemoveNodesByFile:
     def test_removes_correct_count(self, graph: KnowledgeGraph) -> None:
         n1 = _make_node(name="func1", file_path="src/a.py")
@@ -188,13 +149,6 @@ class TestRemoveNodesByFile:
 
         graph.remove_nodes_by_file("src/a.py")
         assert list(graph.iter_relationships()) == []
-
-
-# ---------------------------------------------------------------------------
-# Query — by label / type
-# ---------------------------------------------------------------------------
-
-
 class TestQueryByLabelAndType:
     def test_get_nodes_by_label(self, graph: KnowledgeGraph) -> None:
         fn = _make_node(label=NodeLabel.FUNCTION, name="fn")
@@ -226,13 +180,6 @@ class TestQueryByLabelAndType:
 
     def test_get_relationships_by_type_empty(self, graph: KnowledgeGraph) -> None:
         assert graph.get_relationships_by_type(RelType.EXTENDS) == []
-
-
-# ---------------------------------------------------------------------------
-# Query — outgoing / incoming
-# ---------------------------------------------------------------------------
-
-
 class TestTraversal:
     def test_get_outgoing(self, graph: KnowledgeGraph) -> None:
         n1 = _make_node(name="a")
@@ -285,13 +232,6 @@ class TestTraversal:
 
     def test_get_incoming_no_matches(self, graph: KnowledgeGraph) -> None:
         assert graph.get_incoming("nonexistent") == []
-
-
-# ---------------------------------------------------------------------------
-# Stats
-# ---------------------------------------------------------------------------
-
-
 class TestStats:
     def test_stats_empty_graph(self, graph: KnowledgeGraph) -> None:
         assert graph.stats() == {"nodes": 0, "relationships": 0}

@@ -1,5 +1,3 @@
-"""Tests for the branch diff module (diff.py)."""
-
 from __future__ import annotations
 
 from axon.core.diff import StructuralDiff, diff_graphs, format_diff
@@ -9,12 +7,6 @@ from axon.core.graph.model import (
     NodeLabel,
     RelType,
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _node(nid: str, label: NodeLabel = NodeLabel.FUNCTION, **kwargs) -> GraphNode:
     """Create a GraphNode with sensible defaults."""
@@ -26,7 +18,6 @@ def _node(nid: str, label: NodeLabel = NodeLabel.FUNCTION, **kwargs) -> GraphNod
         **kwargs,
     )
 
-
 def _rel(rid: str, rel_type: RelType = RelType.CALLS, **kwargs) -> GraphRelationship:
     """Create a GraphRelationship with sensible defaults."""
     return GraphRelationship(
@@ -37,15 +28,7 @@ def _rel(rid: str, rel_type: RelType = RelType.CALLS, **kwargs) -> GraphRelation
         **kwargs,
     )
 
-
-# ---------------------------------------------------------------------------
-# Tests: diff_graphs — node detection
-# ---------------------------------------------------------------------------
-
-
 class TestDiffGraphsAddedNodes:
-    """Nodes present in current but not base are detected as added."""
-
     def test_added_nodes(self) -> None:
         base = {}
         current = {"n1": _node("n1")}
@@ -57,10 +40,7 @@ class TestDiffGraphsAddedNodes:
         assert result.removed_nodes == []
         assert result.modified_nodes == []
 
-
 class TestDiffGraphsRemovedNodes:
-    """Nodes present in base but not current are detected as removed."""
-
     def test_removed_nodes(self) -> None:
         base = {"n1": _node("n1")}
         current = {}
@@ -71,10 +51,7 @@ class TestDiffGraphsRemovedNodes:
         assert result.removed_nodes[0].id == "n1"
         assert result.added_nodes == []
 
-
 class TestDiffGraphsModifiedContent:
-    """Nodes with same ID but different content are detected as modified."""
-
     def test_modified_content(self) -> None:
         base = {"n1": _node("n1", content="old body")}
         current = {"n1": _node("n1", content="new body")}
@@ -87,10 +64,7 @@ class TestDiffGraphsModifiedContent:
         assert result.added_nodes == []
         assert result.removed_nodes == []
 
-
 class TestDiffGraphsModifiedSignature:
-    """Nodes with same ID but different signature are detected as modified."""
-
     def test_modified_signature(self) -> None:
         base = {"n1": _node("n1", signature="def foo()")}
         current = {"n1": _node("n1", signature="def foo(x: int)")}
@@ -99,10 +73,7 @@ class TestDiffGraphsModifiedSignature:
 
         assert len(result.modified_nodes) == 1
 
-
 class TestDiffGraphsModifiedLines:
-    """Nodes with same ID but different line numbers are detected as modified."""
-
     def test_modified_start_line(self) -> None:
         base = {"n1": _node("n1", start_line=10, end_line=20)}
         current = {"n1": _node("n1", start_line=15, end_line=25)}
@@ -111,10 +82,7 @@ class TestDiffGraphsModifiedLines:
 
         assert len(result.modified_nodes) == 1
 
-
 class TestDiffGraphsUnchangedNodes:
-    """Identical nodes produce no diff entries."""
-
     def test_unchanged(self) -> None:
         n = _node("n1", content="body", signature="def f()")
         base = {"n1": n}
@@ -126,24 +94,13 @@ class TestDiffGraphsUnchangedNodes:
         assert result.removed_nodes == []
         assert result.modified_nodes == []
 
-
 class TestDiffGraphsEmptyGraphs:
-    """Diffing two empty graphs produces an empty diff."""
-
     def test_empty(self) -> None:
         result = diff_graphs({}, {}, {}, {})
 
         assert result == StructuralDiff()
 
-
-# ---------------------------------------------------------------------------
-# Tests: diff_graphs — relationship detection
-# ---------------------------------------------------------------------------
-
-
 class TestDiffGraphsAddedRelationships:
-    """Relationships in current but not base are added."""
-
     def test_added_rels(self) -> None:
         base_rels: dict[str, GraphRelationship] = {}
         current_rels = {"r1": _rel("r1")}
@@ -153,10 +110,7 @@ class TestDiffGraphsAddedRelationships:
         assert len(result.added_relationships) == 1
         assert result.added_relationships[0].id == "r1"
 
-
 class TestDiffGraphsRemovedRelationships:
-    """Relationships in base but not current are removed."""
-
     def test_removed_rels(self) -> None:
         base_rels = {"r1": _rel("r1")}
         current_rels: dict[str, GraphRelationship] = {}
@@ -166,15 +120,7 @@ class TestDiffGraphsRemovedRelationships:
         assert len(result.removed_relationships) == 1
         assert result.removed_relationships[0].id == "r1"
 
-
-# ---------------------------------------------------------------------------
-# Tests: diff_graphs — mixed scenarios
-# ---------------------------------------------------------------------------
-
-
 class TestDiffGraphsMixedChanges:
-    """A realistic diff with adds, removes, and modifications."""
-
     def test_mixed(self) -> None:
         base_nodes = {
             "n1": _node("n1", content="old"),
@@ -212,23 +158,12 @@ class TestDiffGraphsMixedChanges:
         assert len(result.removed_relationships) == 1
         assert result.removed_relationships[0].id == "r2"
 
-
-# ---------------------------------------------------------------------------
-# Tests: format_diff
-# ---------------------------------------------------------------------------
-
-
 class TestFormatDiffEmpty:
-    """Empty diff produces a 'no differences' message."""
-
     def test_empty(self) -> None:
         result = format_diff(StructuralDiff())
         assert "No structural differences" in result
 
-
 class TestFormatDiffAddedNodes:
-    """Added nodes appear with + prefix."""
-
     def test_added(self) -> None:
         diff = StructuralDiff(added_nodes=[_node("n1", name="my_func")])
         result = format_diff(diff)
@@ -237,10 +172,7 @@ class TestFormatDiffAddedNodes:
         assert "Added nodes (1)" in result
         assert "1 changes" in result
 
-
 class TestFormatDiffRemovedNodes:
-    """Removed nodes appear with - prefix."""
-
     def test_removed(self) -> None:
         diff = StructuralDiff(removed_nodes=[_node("n1", name="old_func")])
         result = format_diff(diff)
@@ -248,10 +180,7 @@ class TestFormatDiffRemovedNodes:
         assert "- old_func" in result
         assert "Removed nodes (1)" in result
 
-
 class TestFormatDiffModifiedNodes:
-    """Modified nodes appear with ~ prefix."""
-
     def test_modified(self) -> None:
         diff = StructuralDiff(
             modified_nodes=[
@@ -263,10 +192,7 @@ class TestFormatDiffModifiedNodes:
         assert "~ changed_func" in result
         assert "Modified nodes (1)" in result
 
-
 class TestFormatDiffRelationships:
-    """Relationship changes include type and source->target."""
-
     def test_rel_format(self) -> None:
         diff = StructuralDiff(
             added_relationships=[_rel("r1", source="func:a:f", target="func:b:g")],
@@ -278,10 +204,7 @@ class TestFormatDiffRelationships:
         assert "Removed relationships (1)" in result
         assert "[calls]" in result
 
-
 class TestFormatDiffFullSummary:
-    """The summary line shows total change count."""
-
     def test_summary(self) -> None:
         diff = StructuralDiff(
             added_nodes=[_node("n1")],

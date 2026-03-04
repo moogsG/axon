@@ -195,6 +195,11 @@ def reindex_files(
     and inserts updated nodes/relationships. Returns the partial graph
     for further processing (global phases, embeddings).
 
+    Note: This only re-runs file-local phases (structure through types).
+    Global phases (communities, processes, dead code, coupling) are NOT
+    re-run. The caller must invoke these separately or use ``watch_repo``
+    which handles this automatically.
+
     Parameters
     ----------
     file_entries:

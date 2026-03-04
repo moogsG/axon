@@ -128,7 +128,7 @@ def find_containing_symbol(
 
     # Scan a small window around idx to handle nested/overlapping symbols.
     search_start = max(0, idx - 10)
-    search_end = min(len(entries), idx + 5)
+    search_end = min(len(entries), idx + 10)
 
     for i in range(search_start, search_end):
         start, end, span, nid = entries[i]

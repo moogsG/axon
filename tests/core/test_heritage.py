@@ -1,5 +1,3 @@
-"""Tests for the heritage extraction phase (Phase 6)."""
-
 from __future__ import annotations
 
 import pytest
@@ -12,12 +10,6 @@ from axon.core.ingestion.symbol_lookup import build_name_index
 from axon.core.parsers.base import ParseResult
 
 _HERITAGE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE)
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
@@ -71,7 +63,6 @@ def graph() -> KnowledgeGraph:
 
     return g
 
-
 def _make_parse_data(
     file_path: str,
     heritage: list[tuple[str, str, str]],
@@ -83,15 +74,7 @@ def _make_parse_data(
         parse_result=ParseResult(heritage=heritage),
     )
 
-
-# ---------------------------------------------------------------------------
-# build_name_index tests (heritage labels)
-# ---------------------------------------------------------------------------
-
-
 class TestBuildSymbolIndex:
-    """build_name_index produces a correct mapping from name to node ID."""
-
     def test_build_symbol_index(self, graph: KnowledgeGraph) -> None:
         index = build_name_index(graph, _HERITAGE_LABELS)
 
@@ -125,15 +108,7 @@ class TestBuildSymbolIndex:
         index = build_name_index(graph, _HERITAGE_LABELS)
         assert "helper" not in index
 
-
-# ---------------------------------------------------------------------------
-# process_heritage — extends
-# ---------------------------------------------------------------------------
-
-
 class TestProcessHeritageExtends:
-    """Dog extends Animal creates an EXTENDS relationship."""
-
     def test_process_heritage_extends(self, graph: KnowledgeGraph) -> None:
         parse_data = [
             _make_parse_data(
@@ -166,15 +141,7 @@ class TestProcessHeritageExtends:
         assert rel.id.startswith("extends:")
         assert "->" in rel.id
 
-
-# ---------------------------------------------------------------------------
-# process_heritage — implements
-# ---------------------------------------------------------------------------
-
-
 class TestProcessHeritageImplements:
-    """User implements Serializable creates an IMPLEMENTS relationship."""
-
     def test_process_heritage_implements(self, graph: KnowledgeGraph) -> None:
         parse_data = [
             _make_parse_data(
@@ -207,15 +174,7 @@ class TestProcessHeritageImplements:
         impl_rels = graph.get_relationships_by_type(RelType.IMPLEMENTS)
         assert impl_rels[0].type == RelType.IMPLEMENTS
 
-
-# ---------------------------------------------------------------------------
-# process_heritage — unresolved parent
-# ---------------------------------------------------------------------------
-
-
 class TestProcessHeritageUnresolvedParent:
-    """Heritage referencing an unknown parent is silently skipped."""
-
     def test_process_heritage_unresolved_parent(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -245,15 +204,7 @@ class TestProcessHeritageUnresolvedParent:
         extends_rels = graph.get_relationships_by_type(RelType.EXTENDS)
         assert len(extends_rels) == 0
 
-
-# ---------------------------------------------------------------------------
-# process_heritage — multiple heritage
-# ---------------------------------------------------------------------------
-
-
 class TestProcessHeritageMultiple:
-    """A class with one extends and two implements produces 3 relationships."""
-
     def test_multiple_heritage(self, graph: KnowledgeGraph) -> None:
         # Add a second interface for the test.
         graph.add_node(
@@ -320,15 +271,7 @@ class TestProcessHeritageMultiple:
         for rel in all_rels:
             assert rel.source == user_id
 
-
-# ---------------------------------------------------------------------------
-# Protocol annotation tests
-# ---------------------------------------------------------------------------
-
-
 class TestProtocolAnnotation:
-    """Heritage with unresolvable Protocol parent annotates the child."""
-
     def test_protocol_parent_annotates_child(self, graph: KnowledgeGraph) -> None:
         parse_data = [
             _make_parse_data(
@@ -372,7 +315,6 @@ class TestProtocolAnnotation:
         assert dog.properties.get("is_protocol") is None
 
     def test_protocol_annotation_does_not_create_edge(self, graph: KnowledgeGraph) -> None:
-        """Protocol annotation should NOT create an EXTENDS edge."""
         parse_data = [
             _make_parse_data(
                 "src/models.py",

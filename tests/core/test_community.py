@@ -1,5 +1,3 @@
-"""Tests for the community detection phase (Phase 8)."""
-
 from __future__ import annotations
 
 import pytest
@@ -17,12 +15,6 @@ from axon.core.ingestion.community import (
     generate_label,
     process_communities,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _add_function(
     graph: KnowledgeGraph,
     file_path: str,
@@ -44,7 +36,6 @@ def _add_function(
     )
     return node_id
 
-
 def _add_call(graph: KnowledgeGraph, source_id: str, target_id: str) -> None:
     """Add a CALLS relationship between two nodes."""
     rel_id = f"calls:{source_id}->{target_id}"
@@ -57,12 +48,6 @@ def _add_call(graph: KnowledgeGraph, source_id: str, target_id: str) -> None:
             properties={"confidence": 1.0},
         )
     )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def two_cluster_graph() -> KnowledgeGraph:
@@ -105,17 +90,8 @@ def two_cluster_graph() -> KnowledgeGraph:
 
     return g
 
-
-# ---------------------------------------------------------------------------
-# test_export_to_igraph
-# ---------------------------------------------------------------------------
-
-
 class TestExportToIgraph:
-    """export_to_igraph correctly converts the KnowledgeGraph call graph."""
-
     def test_export_to_igraph(self, two_cluster_graph: KnowledgeGraph) -> None:
-        """Correct vertex and edge count for the two-cluster fixture."""
         ig_graph, index_map = export_to_igraph(two_cluster_graph)
 
         # 6 function nodes total.
@@ -126,7 +102,6 @@ class TestExportToIgraph:
         assert len(index_map) == 6
 
     def test_export_to_igraph_empty(self) -> None:
-        """Empty graph produces an empty igraph."""
         g = KnowledgeGraph()
         ig_graph, index_map = export_to_igraph(g)
 
@@ -134,25 +109,16 @@ class TestExportToIgraph:
         assert ig_graph.ecount() == 0
         assert len(index_map) == 0
 
-
-# ---------------------------------------------------------------------------
-# test_process_communities
-# ---------------------------------------------------------------------------
-
-
 class TestProcessCommunities:
-    """process_communities detects clusters and creates graph entities."""
-
     def test_process_communities_creates_nodes(
         self, two_cluster_graph: KnowledgeGraph
     ) -> None:
-        """Community nodes are created in the graph."""
         process_communities(two_cluster_graph)
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
             NodeLabel.COMMUNITY
         )
-        assert len(community_nodes) >= 1
+        assert len(community_nodes) >= 2
         # Each community node must have the correct label.
         for node in community_nodes:
             assert node.label == NodeLabel.COMMUNITY
@@ -163,7 +129,6 @@ class TestProcessCommunities:
     def test_process_communities_creates_member_of(
         self, two_cluster_graph: KnowledgeGraph
     ) -> None:
-        """MEMBER_OF relationships are created from members to communities."""
         process_communities(two_cluster_graph)
 
         member_rels = two_cluster_graph.get_relationships_by_type(
@@ -187,7 +152,6 @@ class TestProcessCommunities:
     def test_process_communities_returns_count(
         self, two_cluster_graph: KnowledgeGraph
     ) -> None:
-        """Return value matches the number of Community nodes created."""
         count = process_communities(two_cluster_graph)
 
         community_nodes = two_cluster_graph.get_nodes_by_label(
@@ -197,7 +161,6 @@ class TestProcessCommunities:
         assert count >= 1
 
     def test_process_communities_small_graph(self) -> None:
-        """Graph with fewer than 3 callable nodes returns 0."""
         g = KnowledgeGraph()
         _add_function(g, "src/a.py", "foo")
         _add_function(g, "src/b.py", "bar")
@@ -207,17 +170,8 @@ class TestProcessCommunities:
         assert result == 0
         assert len(g.get_nodes_by_label(NodeLabel.COMMUNITY)) == 0
 
-
-# ---------------------------------------------------------------------------
-# test_generate_label
-# ---------------------------------------------------------------------------
-
-
 class TestGenerateLabel:
-    """generate_label produces human-readable community labels."""
-
     def test_generate_label_same_directory(self) -> None:
-        """All members in one directory gives that directory name."""
         g = KnowledgeGraph()
         ids = [
             _add_function(g, "src/auth/validate.py", "validate"),
@@ -229,7 +183,6 @@ class TestGenerateLabel:
         assert label == "Auth"
 
     def test_generate_label_mixed_directories(self) -> None:
-        """Members from different directories produce a combined label."""
         g = KnowledgeGraph()
         ids = [
             _add_function(g, "src/auth/validate.py", "validate"),
@@ -242,7 +195,6 @@ class TestGenerateLabel:
         assert label == "Auth+data"
 
     def test_generate_label_no_file_paths(self) -> None:
-        """Members with no file paths fall back to 'Cluster'."""
         g = KnowledgeGraph()
         node_id = "function:::orphan"
         g.add_node(

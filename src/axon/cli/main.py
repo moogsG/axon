@@ -359,7 +359,14 @@ def watch() -> None:
 
     if not (axon_dir / "meta.json").exists():
         console.print("[bold]Running initial index...[/bold]")
-        run_pipeline(repo_path, storage, full=True)
+        _, result = run_pipeline(repo_path, storage, full=True)
+        meta = _build_meta(result, repo_path)
+        meta_path = axon_dir / "meta.json"
+        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        try:
+            _register_in_global_registry(meta, repo_path)
+        except Exception:
+            logger.debug("Failed to register repo in global registry", exc_info=True)
 
     console.print(f"[bold]Watching[/bold] {repo_path} for changes (Ctrl+C to stop)")
 
@@ -467,3 +474,67 @@ def serve(
         pass
     finally:
         storage.close()
+
+
+@app.command()
+def ui(
+    port: int = typer.Option(8420, "--port", "-p", help="Port to serve on."),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open browser."),
+    watch_files: bool = typer.Option(False, "--watch", "-w", help="Enable live file watching."),
+    dev: bool = typer.Option(False, "--dev", help="Proxy to Vite dev server for HMR."),
+) -> None:
+    """Launch the Axon web UI."""
+    import uvicorn
+
+    repo_path = Path.cwd().resolve()
+    db_path = repo_path / ".axon" / "kuzu"
+    if not db_path.exists():
+        console.print(
+            f"[red]Error:[/red] No index found at {repo_path}. Run 'axon analyze' first."
+        )
+        raise typer.Exit(code=1)
+
+    from axon.web.app import create_app
+
+    web_app = create_app(db_path=db_path, repo_path=repo_path, watch=watch_files, dev=dev)
+
+    if not no_open:
+        import threading
+        import webbrowser
+
+        url = f"http://localhost:{port}"
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+
+    console.print(f"[bold green]Axon UI[/bold green] running at http://localhost:{port}")
+    if watch_files:
+        console.print("[dim]File watching enabled — graph updates on save[/dim]")
+    if dev:
+        console.print("[dim]Dev mode — proxying to Vite on :5173[/dim]")
+
+    if watch_files:
+        import asyncio
+
+        from axon.core.ingestion.watcher import watch_repo
+
+        async def _run() -> None:
+            config = uvicorn.Config(
+                web_app, host="127.0.0.1", port=port, log_level="warning"
+            )
+            server = uvicorn.Server(config)
+            stop = asyncio.Event()
+
+            async def _serve() -> None:
+                await server.serve()
+                stop.set()
+
+            await asyncio.gather(
+                _serve(),
+                watch_repo(repo_path, web_app.state.storage, stop_event=stop),
+            )
+
+        try:
+            asyncio.run(_run())
+        except KeyboardInterrupt:
+            console.print("\n[bold]UI stopped.[/bold]")
+    else:
+        uvicorn.run(web_app, host="127.0.0.1", port=port, log_level="warning")

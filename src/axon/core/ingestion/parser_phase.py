@@ -9,6 +9,7 @@ to Symbol.
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,7 @@ class FileParseData:
     parse_result: ParseResult
 
 _PARSER_CACHE: dict[str, LanguageParser] = {}
+_PARSER_CACHE_LOCK = threading.Lock()
 
 def get_parser(language: str) -> LanguageParser:
     """Return the appropriate tree-sitter parser for *language*.
@@ -63,30 +65,39 @@ def get_parser(language: str) -> LanguageParser:
     cached = _PARSER_CACHE.get(language)
     if cached is not None:
         return cached
+    with _PARSER_CACHE_LOCK:
+        cached = _PARSER_CACHE.get(language)
+        if cached is not None:
+            return cached
 
-    if language == "python":
-        from axon.core.parsers.python_lang import PythonParser
+        if language == "python":
+            from axon.core.parsers.python_lang import PythonParser
 
-        parser = PythonParser()
+            parser = PythonParser()
 
-    elif language == "typescript":
-        from axon.core.parsers.typescript import TypeScriptParser
+        elif language == "typescript":
+            from axon.core.parsers.typescript import TypeScriptParser
 
-        parser = TypeScriptParser(dialect="typescript")
+            parser = TypeScriptParser(dialect="typescript")
 
-    elif language == "javascript":
-        from axon.core.parsers.typescript import TypeScriptParser
+        elif language == "tsx":
+            from axon.core.parsers.typescript import TypeScriptParser
 
-        parser = TypeScriptParser(dialect="javascript")
+            parser = TypeScriptParser(dialect="tsx")
 
-    else:
-        raise ValueError(
-            f"Unsupported language {language!r}. "
-            f"Expected one of: python, typescript, javascript"
-        )
+        elif language == "javascript":
+            from axon.core.parsers.typescript import TypeScriptParser
 
-    _PARSER_CACHE[language] = parser
-    return parser
+            parser = TypeScriptParser(dialect="javascript")
+
+        else:
+            raise ValueError(
+                f"Unsupported language {language!r}. "
+                f"Expected one of: python, typescript, tsx, javascript"
+            )
+
+        _PARSER_CACHE[language] = parser
+        return parser
 
 def parse_file(file_path: str, content: str, language: str) -> FileParseData:
     """Parse a single file and return structured parse data.

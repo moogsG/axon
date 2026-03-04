@@ -1,5 +1,3 @@
-"""Tests for the KuzuDB storage backend."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,11 +14,6 @@ from axon.core.graph.model import (
 )
 from axon.core.storage.base import NodeEmbedding
 from axon.core.storage.kuzu_backend import KuzuBackend
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def backend(tmp_path: Path) -> KuzuBackend:
@@ -78,14 +71,8 @@ def _build_small_graph() -> KnowledgeGraph:
     return graph
 
 
-# ---------------------------------------------------------------------------
-# Initialize and close
-# ---------------------------------------------------------------------------
-
-
 class TestInitializeAndClose:
     def test_initialize_creates_db(self, backend: KuzuBackend) -> None:
-        """After initialize, internal handles should be set."""
         assert backend._db is not None
         assert backend._conn is not None
 
@@ -95,11 +82,6 @@ class TestInitializeAndClose:
         b.close()
         assert b._db is None
         assert b._conn is None
-
-
-# ---------------------------------------------------------------------------
-# bulk_load
-# ---------------------------------------------------------------------------
 
 
 class TestBulkLoad:
@@ -122,18 +104,12 @@ class TestBulkLoad:
         assert callee.name == "callee"
 
     def test_bulk_load_replaces_existing(self, backend: KuzuBackend) -> None:
-        """Calling bulk_load twice should not duplicate data."""
         graph = _build_small_graph()
         backend.bulk_load(graph)
         backend.bulk_load(graph)
 
         rows = backend.execute_raw("MATCH (n:Function) RETURN n.id")
         assert len(rows) == 2
-
-
-# ---------------------------------------------------------------------------
-# get_node
-# ---------------------------------------------------------------------------
 
 
 class TestGetNode:
@@ -172,11 +148,6 @@ class TestGetNode:
         assert result.is_entry_point is True
         assert result.is_exported is True
         assert result.is_dead is False
-
-
-# ---------------------------------------------------------------------------
-# get_callers / get_callees
-# ---------------------------------------------------------------------------
 
 
 class TestCallersAndCallees:
@@ -219,11 +190,6 @@ class TestCallersAndCallees:
         assert callees == []
 
 
-# ---------------------------------------------------------------------------
-# execute_raw
-# ---------------------------------------------------------------------------
-
-
 class TestExecuteRaw:
     def test_simple_cypher(self, backend: KuzuBackend) -> None:
         backend.add_nodes([_make_node(name="raw_test")])
@@ -235,11 +201,6 @@ class TestExecuteRaw:
     def test_return_expression(self, backend: KuzuBackend) -> None:
         rows = backend.execute_raw("RETURN 1 + 2 AS result")
         assert rows == [[3]]
-
-
-# ---------------------------------------------------------------------------
-# get_indexed_files
-# ---------------------------------------------------------------------------
 
 
 class TestGetIndexedFiles:
@@ -265,11 +226,6 @@ class TestGetIndexedFiles:
         assert result["src/main.py"] == expected_hash
 
 
-# ---------------------------------------------------------------------------
-# remove_nodes_by_file
-# ---------------------------------------------------------------------------
-
-
 class TestRemoveNodesByFile:
     def test_removes_matching_nodes(self, backend: KuzuBackend) -> None:
         n1 = _make_node(name="f1", file_path="src/a.py")
@@ -286,11 +242,6 @@ class TestRemoveNodesByFile:
     def test_returns_zero_for_no_match(self, backend: KuzuBackend) -> None:
         result = backend.remove_nodes_by_file("nonexistent.py")
         assert result == 0
-
-
-# ---------------------------------------------------------------------------
-# traverse
-# ---------------------------------------------------------------------------
 
 
 class TestTraverse:
@@ -312,10 +263,16 @@ class TestTraverse:
         nodes = backend.traverse(caller_id, depth=0, direction="callees")
         assert nodes == []
 
+    def test_traverse_callers(self, backend: KuzuBackend) -> None:
+        graph = _build_small_graph()
+        backend.bulk_load(graph)
 
-# ---------------------------------------------------------------------------
-# add_nodes with different labels
-# ---------------------------------------------------------------------------
+        # callee is the target; traverse callers should return the caller.
+        callee_id = generate_id(NodeLabel.FUNCTION, "src/a.py", "callee")
+        nodes = backend.traverse(callee_id, depth=1, direction="callers")
+
+        assert len(nodes) == 1
+        assert nodes[0].name == "caller"
 
 
 class TestMultipleLabels:
@@ -330,14 +287,8 @@ class TestMultipleLabels:
         assert backend.get_node(cls.id).label == NodeLabel.CLASS
 
 
-# ---------------------------------------------------------------------------
-# load_graph
-# ---------------------------------------------------------------------------
-
-
 class TestLoadGraph:
     def test_round_trips_nodes_and_relationships(self, backend: KuzuBackend) -> None:
-        """Store 3 nodes and 2 relationships, load_graph, verify counts and existence."""
         n1 = _make_node(name="alpha", file_path="src/a.py")
         n2 = _make_node(name="beta", file_path="src/a.py")
         n3 = _make_node(label=NodeLabel.CLASS, name="Gamma", file_path="src/a.py")
@@ -356,7 +307,6 @@ class TestLoadGraph:
         assert graph.get_node(n3.id) is not None
 
     def test_preserves_node_properties(self, backend: KuzuBackend) -> None:
-        """Store a node with boolean flags and signature, verify they survive round-trip."""
         node = GraphNode(
             id=generate_id(NodeLabel.FUNCTION, "src/d.py", "special"),
             label=NodeLabel.FUNCTION,
@@ -379,23 +329,16 @@ class TestLoadGraph:
         assert loaded.is_exported is False
 
     def test_empty_storage_returns_empty_graph(self, backend: KuzuBackend) -> None:
-        """Loading from an empty database returns an empty KnowledgeGraph."""
         graph = backend.load_graph()
 
         assert graph.node_count == 0
         assert graph.relationship_count == 0
 
 
-# ---------------------------------------------------------------------------
-# delete_synthetic_nodes
-# ---------------------------------------------------------------------------
-
-
 class TestDeleteSyntheticNodes:
     def test_removes_community_and_process_keeps_function(
         self, backend: KuzuBackend
     ) -> None:
-        """Store fn + community + process with edges. After delete, only fn remains."""
         fn = _make_node(name="real_func", file_path="src/a.py")
         comm = _make_node(
             label=NodeLabel.COMMUNITY, name="comm_1", file_path=""
@@ -422,14 +365,8 @@ class TestDeleteSyntheticNodes:
         assert graph.relationship_count == 0
 
 
-# ---------------------------------------------------------------------------
-# upsert_embeddings
-# ---------------------------------------------------------------------------
-
-
 class TestUpsertEmbeddings:
     def test_upserts_without_wiping(self, backend: KuzuBackend) -> None:
-        """store_embeddings + upsert_embeddings should result in both existing."""
         emb_a = NodeEmbedding(node_id="function:src/a.py:alpha", embedding=[1.0, 2.0])
         emb_b = NodeEmbedding(node_id="function:src/a.py:beta", embedding=[3.0, 4.0])
 
@@ -444,7 +381,6 @@ class TestUpsertEmbeddings:
         assert "function:src/a.py:beta" in node_ids
 
     def test_updates_existing_embedding(self, backend: KuzuBackend) -> None:
-        """Upserting an existing node_id should update the vector, not duplicate."""
         emb = NodeEmbedding(node_id="function:src/a.py:alpha", embedding=[1.0, 2.0])
         backend.store_embeddings([emb])
 
@@ -462,14 +398,8 @@ class TestUpsertEmbeddings:
         assert rows[0][0][1] == 8.0
 
 
-# ---------------------------------------------------------------------------
-# update_dead_flags
-# ---------------------------------------------------------------------------
-
-
 class TestUpdateDeadFlags:
     def test_sets_dead_and_alive(self, backend: KuzuBackend) -> None:
-        """Mark one node dead and another alive, verify via get_node."""
         n1 = _make_node(name="func_a", file_path="src/a.py")
         n2 = _make_node(name="func_b", file_path="src/a.py")
         backend.add_nodes([n1, n2])
@@ -484,14 +414,8 @@ class TestUpdateDeadFlags:
         assert alive_node.is_dead is False
 
 
-# ---------------------------------------------------------------------------
-# remove_relationships_by_type
-# ---------------------------------------------------------------------------
-
-
 class TestRemoveRelationshipsByType:
     def test_removes_only_specified_type(self, backend: KuzuBackend) -> None:
-        """Store CALLS and COUPLED_WITH. Remove COUPLED_WITH. Verify CALLS survives."""
         n1 = _make_node(name="func_x", file_path="src/a.py")
         n2 = _make_node(name="func_y", file_path="src/a.py")
         backend.add_nodes([n1, n2])

@@ -265,6 +265,8 @@ def _resolve_receiver_method(
                 break
             elif global_match is None:
                 global_match = nid
+        if same_file_match is not None:
+            break
 
     target = same_file_match or global_match
     if target is not None:

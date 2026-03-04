@@ -99,7 +99,7 @@ def _reindex_files(
     if entries:
         reindex_files(entries, repo_path, storage)
 
-    return len(entries), reindexed_paths
+    return len(reindexed_paths), reindexed_paths
 
 
 def _compute_dirty_node_ids(graph: KnowledgeGraph, dirty_files: set[str]) -> set[str]:
@@ -247,7 +247,7 @@ async def watch_repo(
         starvation = first_dirty_time > 0 and (now - first_dirty_time) >= MAX_DIRTY_AGE
         if (
             dirty_files
-            and not global_lock.locked()
+            and not global_lock.locked()  # Safe: single async event loop, no await between check and acquire.
             and (quiet_elapsed or starvation)
         ):
             snapshot = dirty_files.copy()

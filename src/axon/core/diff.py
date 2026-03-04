@@ -87,6 +87,13 @@ def _node_changed(base: GraphNode, current: GraphNode) -> bool:
             return True
     return False
 
+def _normalize_id(node_id: str, src: str, dst: str) -> str:
+    """Replace *src* prefix with *dst* in *node_id*."""
+    if src and node_id.startswith(src):
+        return dst + node_id[len(src):]
+    return node_id
+
+
 def diff_branches(
     repo_path: Path,
     branch_range: str,
@@ -128,26 +135,50 @@ def diff_branches(
     if not base_ref:
         raise ValueError(f"Invalid branch range: {branch_range!r}")
 
+    repo_str = str(repo_path)
+
     # Build both graphs (in parallel when both need worktrees).
     if current_ref:
         with ThreadPoolExecutor(max_workers=2) as executor:
             base_future = executor.submit(_build_graph_for_ref, repo_path, base_ref)
             current_future = executor.submit(_build_graph_for_ref, repo_path, current_ref)
-            base_graph = base_future.result()
-            current_graph = current_future.result()
+            base_graph, base_wt = base_future.result()
+            current_graph, current_wt = current_future.result()
     else:
         current_graph = build_graph(repo_path)
-        base_graph = _build_graph_for_ref(repo_path, base_ref)
+        current_wt = repo_str
+        base_graph, base_wt = _build_graph_for_ref(repo_path, base_ref)
 
-    base_nodes = {n.id: n for n in base_graph.iter_nodes()}
-    current_nodes = {n.id: n for n in current_graph.iter_nodes()}
-    base_rels = {r.id: r for r in base_graph.iter_relationships()}
-    current_rels = {r.id: r for r in current_graph.iter_relationships()}
+    base_wt_str = str(base_wt)
+    current_wt_str = str(current_wt)
+
+    base_nodes = {
+        _normalize_id(n.id, base_wt_str, repo_str): n
+        for n in base_graph.iter_nodes()
+    }
+    current_nodes = {
+        _normalize_id(n.id, current_wt_str, repo_str): n
+        for n in current_graph.iter_nodes()
+    }
+    base_rels = {
+        _normalize_id(r.id, base_wt_str, repo_str): r
+        for r in base_graph.iter_relationships()
+    }
+    current_rels = {
+        _normalize_id(r.id, current_wt_str, repo_str): r
+        for r in current_graph.iter_relationships()
+    }
 
     return diff_graphs(base_nodes, current_nodes, base_rels, current_rels)
 
-def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
-    """Build an in-memory graph for a git ref using a temporary worktree."""
+def _build_graph_for_ref(repo_path: Path, ref: str) -> "tuple[KnowledgeGraph, Path]":
+    """Build an in-memory graph for a git ref using a temporary worktree.
+
+    Returns:
+        A ``(graph, worktree_path)`` tuple.  The caller must use
+        *worktree_path* to normalize absolute paths embedded in node IDs
+        back to repo-relative paths before comparing graphs.
+    """
     from axon.core.graph.graph import KnowledgeGraph
     from axon.core.ingestion.pipeline import build_graph
 
@@ -181,7 +212,8 @@ def _build_graph_for_ref(repo_path: Path, ref: str) -> "KnowledgeGraph":
             except subprocess.CalledProcessError:
                 logger.warning("Failed to remove worktree at %s", worktree_path)
 
-    return graph
+    # Convert to str before TemporaryDirectory cleanup; used only for path normalization
+    return graph, str(worktree_path)
 
 def format_diff(diff: StructuralDiff) -> str:
     """Format a StructuralDiff as human-readable output.

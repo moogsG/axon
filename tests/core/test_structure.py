@@ -1,5 +1,3 @@
-"""Tests for the structure processor (Phase 2)."""
-
 from __future__ import annotations
 
 import pytest
@@ -9,30 +7,18 @@ from axon.core.graph.model import NodeLabel, RelType, generate_id
 from axon.core.ingestion.structure import process_structure
 from axon.core.ingestion.walker import FileEntry
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
     """Return a fresh, empty KnowledgeGraph."""
     return KnowledgeGraph()
 
 
-def _make_files(*paths: str, content: str = "", language: str = "python") -> list[FileInfo]:
+def _make_files(*paths: str, content: str = "", language: str = "python") -> list[FileEntry]:
     """Build a list of FileInfo entries from paths with shared defaults."""
     return [FileEntry(path=p, content=content, language=language) for p in paths]
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
 class TestCreatesFileNodes:
-    """test_creates_file_nodes — creates File nodes for each file."""
-
     def test_creates_file_nodes(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/auth/crypto.py", "src/models/user.py")
         process_structure(files, graph)
@@ -47,8 +33,6 @@ class TestCreatesFileNodes:
 
 
 class TestCreatesFolderNodes:
-    """test_creates_folder_nodes — creates Folder nodes for each unique directory."""
-
     def test_creates_folder_nodes(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/models/user.py")
         process_structure(files, graph)
@@ -63,8 +47,6 @@ class TestCreatesFolderNodes:
 
 
 class TestCreatesContainsRelationships:
-    """test_creates_contains_relationships — folder contains files."""
-
     def test_creates_contains_relationships(self, graph: KnowledgeGraph) -> None:
         files = _make_files("src/auth/validate.py", "src/auth/crypto.py")
         process_structure(files, graph)
@@ -85,8 +67,6 @@ class TestCreatesContainsRelationships:
 
 
 class TestNestedFolders:
-    """test_nested_folders — parent folder contains child folder."""
-
     def test_nested_folders(self, graph: KnowledgeGraph) -> None:
         files = _make_files("a/b/c/file.py")
         process_structure(files, graph)
@@ -111,8 +91,6 @@ class TestNestedFolders:
 
 
 class TestRootLevelFiles:
-    """test_root_level_files — files at root level work correctly."""
-
     def test_root_level_files(self, graph: KnowledgeGraph) -> None:
         files = _make_files("README.md", "setup.py")
         process_structure(files, graph)
@@ -129,7 +107,6 @@ class TestRootLevelFiles:
         assert len(contains_rels) == 0
 
     def test_root_level_mixed_with_nested(self, graph: KnowledgeGraph) -> None:
-        """Root-level files coexist with nested files without errors."""
         files = _make_files("README.md", "src/main.py")
         process_structure(files, graph)
 
@@ -146,8 +123,6 @@ class TestRootLevelFiles:
 
 
 class TestNoDuplicateFolders:
-    """test_no_duplicate_folders — same folder from multiple files is created once."""
-
     def test_no_duplicate_folders(self, graph: KnowledgeGraph) -> None:
         files = _make_files(
             "src/auth/validate.py",
@@ -165,8 +140,6 @@ class TestNoDuplicateFolders:
 
 
 class TestFileNodeProperties:
-    """test_file_node_properties — name, content, language set correctly."""
-
     def test_file_node_properties(self, graph: KnowledgeGraph) -> None:
         files = [
             FileEntry(
@@ -189,8 +162,6 @@ class TestFileNodeProperties:
 
 
 class TestEmptyFileList:
-    """test_empty_file_list — empty input produces empty graph."""
-
     def test_empty_file_list(self, graph: KnowledgeGraph) -> None:
         process_structure([], graph)
 

@@ -1,5 +1,3 @@
-"""Tests for the parsing processor (Phase 3)."""
-
 from __future__ import annotations
 
 import pytest
@@ -15,13 +13,6 @@ from axon.core.ingestion.parser_phase import (
 from axon.core.ingestion.walker import FileEntry
 from axon.core.parsers.python_lang import PythonParser
 from axon.core.parsers.typescript import TypeScriptParser
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
     """Return a KnowledgeGraph pre-populated with File nodes for test files."""
@@ -50,7 +41,6 @@ def graph() -> KnowledgeGraph:
     )
 
     return g
-
 
 PYTHON_CODE = """\
 class UserService:
@@ -86,60 +76,32 @@ function add(a, b) {
 }
 """
 
-
 def _make_file_entry(
     path: str, content: str, language: str
 ) -> FileEntry:
     return FileEntry(path=path, content=content, language=language)
-
-
-# ---------------------------------------------------------------------------
-# get_parser tests
-# ---------------------------------------------------------------------------
-
-
 class TestGetParserPython:
-    """get_parser returns PythonParser for 'python'."""
-
     def test_get_parser_python(self) -> None:
         parser = get_parser("python")
         assert isinstance(parser, PythonParser)
 
-
 class TestGetParserTypeScript:
-    """get_parser returns TypeScriptParser for 'typescript'."""
-
     def test_get_parser_typescript(self) -> None:
         parser = get_parser("typescript")
         assert isinstance(parser, TypeScriptParser)
         assert parser.dialect == "typescript"
 
-
 class TestGetParserJavaScript:
-    """get_parser returns TypeScriptParser with 'javascript' dialect."""
-
     def test_get_parser_javascript(self) -> None:
         parser = get_parser("javascript")
         assert isinstance(parser, TypeScriptParser)
         assert parser.dialect == "javascript"
 
-
 class TestGetParserUnsupported:
-    """get_parser raises ValueError for unknown languages."""
-
     def test_get_parser_unsupported(self) -> None:
         with pytest.raises(ValueError, match="Unsupported language"):
             get_parser("rust")
-
-
-# ---------------------------------------------------------------------------
-# parse_file tests
-# ---------------------------------------------------------------------------
-
-
 class TestParseFilePython:
-    """parse_file parses Python source and returns correct symbols."""
-
     def test_parse_file_python(self) -> None:
         data = parse_file("src/utils.py", PYTHON_CODE, "python")
 
@@ -159,10 +121,7 @@ class TestParseFilePython:
         for m in methods:
             assert m.class_name == "UserService"
 
-
 class TestParseFileTypeScript:
-    """parse_file parses TypeScript source and returns correct symbols."""
-
     def test_parse_file_typescript(self) -> None:
         data = parse_file("src/app.ts", TYPESCRIPT_CODE, "typescript")
 
@@ -174,16 +133,7 @@ class TestParseFileTypeScript:
         assert "Config" in symbol_names
         assert "App" in symbol_names
         assert "run" in symbol_names
-
-
-# ---------------------------------------------------------------------------
-# process_parsing tests
-# ---------------------------------------------------------------------------
-
-
 class TestProcessParsingCreatesFunctionNodes:
-    """process_parsing creates Function nodes in the graph."""
-
     def test_process_parsing_creates_function_nodes(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -208,10 +158,7 @@ class TestProcessParsingCreatesFunctionNodes:
         assert "def helper" in node.content
         assert node.signature != ""
 
-
 class TestProcessParsingCreatesClassNodes:
-    """process_parsing creates Class nodes in the graph."""
-
     def test_process_parsing_creates_class_nodes(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -231,10 +178,7 @@ class TestProcessParsingCreatesClassNodes:
         assert node is not None
         assert "class UserService" in node.content
 
-
 class TestProcessParsingCreatesMethodNodes:
-    """process_parsing creates Method nodes with class_name set."""
-
     def test_process_parsing_creates_method_nodes(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -269,10 +213,7 @@ class TestProcessParsingCreatesMethodNodes:
         assert node is not None
         assert node.name == "get_user"
 
-
 class TestProcessParsingCreatesDefinesRelationships:
-    """process_parsing creates DEFINES relationships from File to Symbol."""
-
     def test_process_parsing_creates_defines_relationships(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -315,10 +256,7 @@ class TestProcessParsingCreatesDefinesRelationships:
             assert rel.id.startswith("defines:")
             assert "->" in rel.id
 
-
 class TestProcessParsingReturnsParseData:
-    """process_parsing returns FileParseData for use by later phases."""
-
     def test_process_parsing_returns_parse_data(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -368,10 +306,7 @@ class TestProcessParsingReturnsParseData:
         call_names = [c.name for c in result[0].parse_result.calls]
         assert "bar" in call_names
 
-
 class TestProcessParsingHandlesError:
-    """process_parsing handles bad content gracefully without crashing."""
-
     def test_process_parsing_handles_error(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -417,10 +352,7 @@ class TestProcessParsingHandlesError:
         # The Python file should parse successfully.
         assert len(result[1].parse_result.symbols) > 0
 
-
 class TestProcessParsingTypeScript:
-    """process_parsing handles TypeScript interface and class nodes."""
-
     def test_creates_interface_nodes(self, graph: KnowledgeGraph) -> None:
         files = [_make_file_entry("src/app.ts", TYPESCRIPT_CODE, "typescript")]
         process_parsing(files, graph)

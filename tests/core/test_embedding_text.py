@@ -1,10 +1,3 @@
-"""Tests for embedding text generation (Task 23).
-
-Verifies that ``generate_text`` produces a structured natural-language
-description for every supported node type, capturing relevant graph
-context (edges, neighbours, signatures, etc.).
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -18,12 +11,6 @@ from axon.core.graph.model import (
     generate_id,
 )
 from axon.core.embeddings.text import generate_text
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _node(
     label: NodeLabel,
@@ -44,7 +31,6 @@ def _node(
         **({"properties": extra} if extra else {}),
     )
 
-
 def _rel(
     source: str,
     target: str,
@@ -59,23 +45,13 @@ def _rel(
         target=target,
     )
 
-
 def _add(graph: KnowledgeGraph, *nodes: GraphNode) -> None:
     """Add multiple nodes to *graph*."""
     for n in nodes:
         graph.add_node(n)
 
-
-# ---------------------------------------------------------------------------
-# Tests — Function / Method
-# ---------------------------------------------------------------------------
-
-
 class TestFunctionText:
-    """generate_text for FUNCTION nodes."""
-
     def test_function_basic_info(self) -> None:
-        """Text includes name, file path, and signature."""
         graph = KnowledgeGraph()
         fn = _node(
             NodeLabel.FUNCTION,
@@ -92,7 +68,6 @@ class TestFunctionText:
         assert "def validate_user(user: User) -> bool" in text
 
     def test_function_with_calls(self) -> None:
-        """Text lists callees (outgoing CALLS) and callers (incoming CALLS)."""
         graph = KnowledgeGraph()
         fn = _node(NodeLabel.FUNCTION, "validate_user", file_path="src/auth.py")
         callee1 = _node(NodeLabel.FUNCTION, "check_password", file_path="src/auth.py")
@@ -115,7 +90,6 @@ class TestFunctionText:
         assert "login_handler" in text
 
     def test_function_with_uses_type(self) -> None:
-        """Text lists types referenced via USES_TYPE edges."""
         graph = KnowledgeGraph()
         fn = _node(NodeLabel.FUNCTION, "validate_user", file_path="src/auth.py")
         type_node = _node(NodeLabel.CLASS, "User", file_path="src/models.py")
@@ -128,12 +102,8 @@ class TestFunctionText:
         assert "uses types:" in text.lower() or "uses types:" in text
         assert "User" in text
 
-
 class TestMethodText:
-    """generate_text for METHOD nodes."""
-
     def test_method_includes_class_name(self) -> None:
-        """Text includes the class it belongs to."""
         graph = KnowledgeGraph()
         method = _node(
             NodeLabel.METHOD,
@@ -151,17 +121,8 @@ class TestMethodText:
         assert "User" in text
         assert "def get_name(self) -> str" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — Class
-# ---------------------------------------------------------------------------
-
-
 class TestClassText:
-    """generate_text for CLASS nodes."""
-
     def test_class_basic_info(self) -> None:
-        """Text includes name and file path."""
         graph = KnowledgeGraph()
         cls = _node(NodeLabel.CLASS, "UserService", file_path="src/services.py")
         graph.add_node(cls)
@@ -172,7 +133,6 @@ class TestClassText:
         assert "src/services.py" in text
 
     def test_class_with_methods(self) -> None:
-        """Text lists methods that belong to the class (class_name match)."""
         graph = KnowledgeGraph()
         cls = _node(NodeLabel.CLASS, "UserService", file_path="src/services.py")
         m1 = _node(
@@ -203,7 +163,6 @@ class TestClassText:
         assert "other_method" not in text
 
     def test_class_with_extends_and_implements(self) -> None:
-        """Text lists base classes (EXTENDS) and interfaces (IMPLEMENTS)."""
         graph = KnowledgeGraph()
         cls = _node(NodeLabel.CLASS, "Admin", file_path="src/models.py")
         base = _node(NodeLabel.CLASS, "User", file_path="src/models.py")
@@ -220,17 +179,8 @@ class TestClassText:
         assert "implements:" in text.lower() or "implements:" in text
         assert "Serializable" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — File
-# ---------------------------------------------------------------------------
-
-
 class TestFileText:
-    """generate_text for FILE nodes."""
-
     def test_file_basic_info(self) -> None:
-        """Text includes name and path."""
         graph = KnowledgeGraph()
         file_node = _node(NodeLabel.FILE, "auth.py", file_path="src/auth.py")
         graph.add_node(file_node)
@@ -241,7 +191,6 @@ class TestFileText:
         assert "src/auth.py" in text
 
     def test_file_with_defines_and_imports(self) -> None:
-        """Text lists symbols defined and imports."""
         graph = KnowledgeGraph()
         file_node = _node(NodeLabel.FILE, "auth.py", file_path="src/auth.py")
         fn = _node(NodeLabel.FUNCTION, "validate", file_path="src/auth.py")
@@ -261,15 +210,7 @@ class TestFileText:
         assert "imports:" in text.lower() or "imports:" in text
         assert "hash_password" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — Interface / TypeAlias / Enum
-# ---------------------------------------------------------------------------
-
-
 class TestInterfaceText:
-    """generate_text for INTERFACE nodes."""
-
     def test_interface_basic(self) -> None:
         graph = KnowledgeGraph()
         iface = _node(
@@ -286,10 +227,7 @@ class TestInterfaceText:
         assert "src/types.ts" in text
         assert "interface Serializable { toJSON(): string; }" in text
 
-
 class TestTypeAliasText:
-    """generate_text for TYPE_ALIAS nodes."""
-
     def test_type_alias_basic(self) -> None:
         graph = KnowledgeGraph()
         ta = _node(
@@ -306,10 +244,7 @@ class TestTypeAliasText:
         assert "src/types.py" in text
         assert "type UserID = int" in text
 
-
 class TestEnumText:
-    """generate_text for ENUM nodes."""
-
     def test_enum_basic(self) -> None:
         graph = KnowledgeGraph()
         enum_node = _node(
@@ -326,17 +261,8 @@ class TestEnumText:
         assert "src/enums.py" in text
         assert "class Color(Enum)" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — Folder
-# ---------------------------------------------------------------------------
-
-
 class TestFolderText:
-    """generate_text for FOLDER nodes."""
-
     def test_folder_with_contents(self) -> None:
-        """Text lists files the folder contains (outgoing CONTAINS)."""
         graph = KnowledgeGraph()
         folder = _node(NodeLabel.FOLDER, "auth", file_path="src/auth")
         f1 = _node(NodeLabel.FILE, "validate.py", file_path="src/auth/validate.py")
@@ -354,17 +280,8 @@ class TestFolderText:
         assert "validate.py" in text
         assert "hash.py" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — Community
-# ---------------------------------------------------------------------------
-
-
 class TestCommunityText:
-    """generate_text for COMMUNITY nodes."""
-
     def test_community_with_members(self) -> None:
-        """Text lists member symbols (incoming MEMBER_OF)."""
         graph = KnowledgeGraph()
         community = _node(NodeLabel.COMMUNITY, "Auth")
         member1 = _node(NodeLabel.FUNCTION, "validate", file_path="src/auth.py")
@@ -382,17 +299,8 @@ class TestCommunityText:
         assert "validate" in text
         assert "hash_password" in text
 
-
-# ---------------------------------------------------------------------------
-# Tests — Process
-# ---------------------------------------------------------------------------
-
-
 class TestProcessText:
-    """generate_text for PROCESS nodes."""
-
     def test_process_with_steps(self) -> None:
-        """Text lists steps (incoming STEP_IN_PROCESS)."""
         graph = KnowledgeGraph()
         process = _node(NodeLabel.PROCESS, "user_registration")
         step1 = _node(NodeLabel.FUNCTION, "validate_input", file_path="src/reg.py")
@@ -413,17 +321,8 @@ class TestProcessText:
         assert "create_user" in text
         assert "send_email" in text
 
-
-# ---------------------------------------------------------------------------
-# Edge cases
-# ---------------------------------------------------------------------------
-
-
 class TestEdgeCases:
-    """Edge cases and robustness."""
-
     def test_node_with_no_edges(self) -> None:
-        """A standalone node still produces valid text."""
         graph = KnowledgeGraph()
         fn = _node(
             NodeLabel.FUNCTION,
@@ -441,7 +340,6 @@ class TestEdgeCases:
         assert text.strip()  # Non-empty
 
     def test_empty_signature_is_omitted(self) -> None:
-        """If signature is empty, it should not produce a blank line."""
         graph = KnowledgeGraph()
         fn = _node(NodeLabel.FUNCTION, "simple", file_path="src/app.py", signature="")
         graph.add_node(fn)
@@ -451,7 +349,6 @@ class TestEdgeCases:
         assert "signature:" not in text.lower()
 
     def test_method_with_calls_and_types(self) -> None:
-        """Method behaves like function for calls and type relationships."""
         graph = KnowledgeGraph()
         method = _node(
             NodeLabel.METHOD,

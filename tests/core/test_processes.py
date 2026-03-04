@@ -1,5 +1,3 @@
-"""Tests for the process / execution flow detection phase (Phase 9)."""
-
 from __future__ import annotations
 
 import pytest
@@ -19,13 +17,6 @@ from axon.core.ingestion.processes import (
     process_processes,
     trace_flow,
 )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _add_function(
     graph: KnowledgeGraph,
     name: str,
@@ -49,7 +40,6 @@ def _add_function(
     graph.add_node(node)
     return node
 
-
 def _add_call(
     graph: KnowledgeGraph,
     source: GraphNode,
@@ -68,7 +58,6 @@ def _add_call(
         )
     )
 
-
 def _add_member_of(
     graph: KnowledgeGraph,
     node: GraphNode,
@@ -85,16 +74,12 @@ def _add_member_of(
         )
     )
 
-
-# ---------------------------------------------------------------------------
 # Fixture: call graph
 #
 #   main() --> validate() --> hash_password()
 #                         \-> query_db() --> format_result()
 #
 #   orphan_func() <-- (has incoming call from some_caller)
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
@@ -124,18 +109,8 @@ def graph() -> KnowledgeGraph:
     _add_call(g, some_caller, orphan_func)
 
     return g
-
-
-# ---------------------------------------------------------------------------
-# 1. test_find_entry_points
-# ---------------------------------------------------------------------------
-
-
 class TestFindEntryPoints:
-    """Entry points are functions with no incoming CALLS edges."""
-
     def test_find_entry_points(self, graph: KnowledgeGraph) -> None:
-        """main is identified as entry point; orphan_func is NOT."""
         entry_points = find_entry_points(graph)
         ep_names = {n.name for n in entry_points}
 
@@ -146,22 +121,11 @@ class TestFindEntryPoints:
         assert "orphan_func" not in ep_names
 
     def test_entry_point_flag_set(self, graph: KnowledgeGraph) -> None:
-        """is_entry_point is set to True on detected entry points."""
         entry_points = find_entry_points(graph)
         for ep in entry_points:
             assert ep.is_entry_point is True
-
-
-# ---------------------------------------------------------------------------
-# 2. test_find_entry_points_framework
-# ---------------------------------------------------------------------------
-
-
 class TestFindEntryPointsFramework:
-    """Framework patterns are recognised as entry points."""
-
     def test_test_function_is_entry_point(self) -> None:
-        """A function named test_something is detected as entry point."""
         g = KnowledgeGraph()
         test_fn = _add_function(g, "test_something", language="python")
 
@@ -174,7 +138,6 @@ class TestFindEntryPointsFramework:
         assert "test_something" in ep_names
 
     def test_decorator_pattern_entry_point(self) -> None:
-        """A function with @app.route in content is an entry point."""
         g = KnowledgeGraph()
         _add_function(
             g,
@@ -188,7 +151,6 @@ class TestFindEntryPointsFramework:
         assert "index" in ep_names
 
     def test_ts_handler_is_entry_point(self) -> None:
-        """A TypeScript function named handler is an entry point."""
         g = KnowledgeGraph()
         _add_function(
             g,
@@ -200,18 +162,8 @@ class TestFindEntryPointsFramework:
         entry_points = find_entry_points(g)
         ep_names = {n.name for n in entry_points}
         assert "handler" in ep_names
-
-
-# ---------------------------------------------------------------------------
-# 3. test_trace_flow
-# ---------------------------------------------------------------------------
-
-
 class TestTraceFlow:
-    """BFS traces the correct path from an entry point."""
-
     def test_trace_flow(self, graph: KnowledgeGraph) -> None:
-        """Tracing from main covers the full call chain."""
         main_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "main")
         main_node = graph.get_node(main_id)
         assert main_node is not None
@@ -228,7 +180,6 @@ class TestTraceFlow:
         assert len(flow) == 5
 
     def test_trace_flow_no_cycles(self, graph: KnowledgeGraph) -> None:
-        """Visited tracking prevents infinite loops in cyclic graphs."""
         g = KnowledgeGraph()
         a = _add_function(g, "a")
         b = _add_function(g, "b")
@@ -237,18 +188,8 @@ class TestTraceFlow:
 
         flow = trace_flow(a, g)
         assert len(flow) == 2  # a, b -- no revisit
-
-
-# ---------------------------------------------------------------------------
-# 4. test_trace_flow_max_depth
-# ---------------------------------------------------------------------------
-
-
 class TestTraceFlowMaxDepth:
-    """Depth limit is respected."""
-
     def test_trace_flow_max_depth(self, graph: KnowledgeGraph) -> None:
-        """With max_depth=1, only the direct callees are included."""
         main_id = generate_id(NodeLabel.FUNCTION, "src/app.py", "main")
         main_node = graph.get_node(main_id)
         assert main_node is not None
@@ -262,18 +203,8 @@ class TestTraceFlowMaxDepth:
         # Depth-2 nodes should NOT appear.
         assert "hash_password" not in flow_names
         assert "query_db" not in flow_names
-
-
-# ---------------------------------------------------------------------------
-# 5. test_generate_process_label
-# ---------------------------------------------------------------------------
-
-
 class TestGenerateProcessLabel:
-    """Process labels are formatted correctly."""
-
     def test_generate_process_label(self) -> None:
-        """Multi-step label uses arrow notation with max 4 steps."""
         nodes = [
             GraphNode(id=f"n{i}", label=NodeLabel.FUNCTION, name=name)
             for i, name in enumerate(
@@ -285,26 +216,14 @@ class TestGenerateProcessLabel:
         assert label == "main \u2192 validate \u2192 hash_password \u2192 query_db"
 
     def test_generate_process_label_single(self) -> None:
-        """Single-step label is just the function name."""
         nodes = [GraphNode(id="n0", label=NodeLabel.FUNCTION, name="main")]
         label = generate_process_label(nodes)
         assert label == "main"
 
     def test_generate_process_label_empty(self) -> None:
-        """Empty input gives empty string."""
         assert generate_process_label([]) == ""
-
-
-# ---------------------------------------------------------------------------
-# 6. test_deduplicate_flows
-# ---------------------------------------------------------------------------
-
-
 class TestDeduplicateFlows:
-    """Similar flows are merged by keeping the longer one."""
-
     def test_deduplicate_flows(self) -> None:
-        """A short flow that overlaps >70% with a longer flow is discarded."""
         # Create nodes.
         a = GraphNode(id="a", label=NodeLabel.FUNCTION, name="a")
         b = GraphNode(id="b", label=NodeLabel.FUNCTION, name="b")
@@ -319,7 +238,6 @@ class TestDeduplicateFlows:
         assert len(result[0]) == 4  # Kept the longer flow.
 
     def test_deduplicate_keeps_distinct(self) -> None:
-        """Flows with low overlap are both kept."""
         a = GraphNode(id="a", label=NodeLabel.FUNCTION, name="a")
         b = GraphNode(id="b", label=NodeLabel.FUNCTION, name="b")
         c = GraphNode(id="c", label=NodeLabel.FUNCTION, name="c")
@@ -330,16 +248,7 @@ class TestDeduplicateFlows:
 
         result = deduplicate_flows([flow1, flow2])
         assert len(result) == 2
-
-
-# ---------------------------------------------------------------------------
-# 7. test_process_processes_creates_nodes
-# ---------------------------------------------------------------------------
-
-
 class TestProcessProcessesCreatesNodes:
-    """process_processes creates Process nodes in the graph."""
-
     def test_process_processes_creates_nodes(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -352,16 +261,7 @@ class TestProcessProcessesCreatesNodes:
         for pn in process_nodes:
             assert pn.name != ""
             assert pn.properties["step_count"] > 1
-
-
-# ---------------------------------------------------------------------------
-# 8. test_process_processes_creates_steps
-# ---------------------------------------------------------------------------
-
-
 class TestProcessProcessesCreatesSteps:
-    """STEP_IN_PROCESS relationships are created with step numbers."""
-
     def test_process_processes_creates_steps(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -384,16 +284,7 @@ class TestProcessProcessesCreatesSteps:
             )
             assert step_numbers[0] == 0
             assert step_numbers == list(range(len(step_numbers)))
-
-
-# ---------------------------------------------------------------------------
-# 9. test_process_processes_returns_count
-# ---------------------------------------------------------------------------
-
-
 class TestProcessProcessesReturnsCount:
-    """process_processes returns the correct count of processes created."""
-
     def test_process_processes_returns_count(
         self, graph: KnowledgeGraph
     ) -> None:

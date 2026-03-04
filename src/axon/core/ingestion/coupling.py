@@ -64,10 +64,13 @@ def parse_git_log(
             cwd=repo_path,
             capture_output=True,
             text=True,
-            check=True,
+            timeout=30,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.debug("git log failed for %s — not a git repo?", repo_path)
+        if result.returncode != 0:
+            logger.debug("git log failed for %s — not a git repo?", repo_path)
+            return []
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logger.debug("git log timed out or failed for %s", repo_path)
         return []
 
     commits: list[list[str]] = []
@@ -164,6 +167,7 @@ def process_coupling(
     min_strength: float = 0.3,
     *,
     commits: list[list[str]] | None = None,
+    min_cochanges: int = 3,
 ) -> int:
     """Analyze git history and create ``COUPLED_WITH`` relationships.
 
@@ -177,6 +181,9 @@ def process_coupling(
         min_strength: Minimum coupling strength to create a relationship.
         commits: Pre-parsed commit data.  When provided, ``parse_git_log``
             is skipped — useful for deterministic testing.
+        min_cochanges: Minimum co-change count to include a pair.  Defaults
+            to 3 to keep the matrix small; pass 1 for tests with small
+            commit sets.
 
     Returns:
         The number of ``COUPLED_WITH`` relationships created.
@@ -187,8 +194,7 @@ def process_coupling(
     if commits is None:
         commits = parse_git_log(repo_path, graph_files=graph_files)
 
-    # Build co-change matrix (threshold of 1 — we filter by strength later).
-    cochange = build_cochange_matrix(commits, min_cochanges=1)
+    cochange = build_cochange_matrix(commits, min_cochanges=min_cochanges)
 
     # Count total changes per file (across all commits).
     total_changes: dict[str, int] = defaultdict(int)

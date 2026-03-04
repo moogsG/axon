@@ -102,8 +102,7 @@ def generate_label(graph: KnowledgeGraph, member_ids: list[str]) -> str:
     counts = Counter(directories)
     most_common = counts.most_common(2)
 
-    if len(most_common) == 1 or most_common[0][0] == most_common[-1][0]:
-        # All members in the same directory.
+    if len(most_common) == 1:
         return most_common[0][0].capitalize()
 
     # Mixed directories: combine top two.
@@ -144,7 +143,6 @@ def process_communities(
     partition = leidenalg.find_partition(
         ig_graph, leidenalg.ModularityVertexPartition
     )
-    modularity_score = partition.modularity
 
     community_count = 0
     for i, members in enumerate(partition):
@@ -152,6 +150,11 @@ def process_communities(
             continue
 
         member_ids = [index_to_node_id[idx] for idx in members]
+
+        subgraph = ig_graph.induced_subgraph(members)
+        n_members = len(members)
+        max_edges = n_members * (n_members - 1)
+        density = subgraph.ecount() / max_edges if max_edges > 0 else 0.0
 
         community_id = generate_id(NodeLabel.COMMUNITY, f"community_{i}")
         label = generate_label(graph, member_ids)
@@ -161,7 +164,7 @@ def process_communities(
             label=NodeLabel.COMMUNITY,
             name=label,
             properties={
-                "cohesion": modularity_score,
+                "cohesion": density,
                 "symbol_count": len(member_ids),
             },
         )
@@ -180,11 +183,11 @@ def process_communities(
 
         community_count += 1
         logger.info(
-            "Community %d: %r with %d members (modularity=%.3f)",
+            "Community %d: %r with %d members (density=%.3f)",
             i,
             label,
             len(member_ids),
-            modularity_score,
+            density,
         )
 
     logger.info(

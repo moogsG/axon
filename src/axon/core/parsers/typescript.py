@@ -381,10 +381,18 @@ class TypeScriptParser(LanguageParser):
                 for sub in child.children:
                     if sub.type in ("identifier", "type_identifier"):
                         result.heritage.append((class_name, "extends", sub.text.decode()))
+                    elif sub.type == "generic_type":
+                        name_node = sub.child_by_field_name("name")
+                        if name_node is not None:
+                            result.heritage.append((class_name, "extends", name_node.text.decode()))
             elif child.type == "implements_clause":
                 for sub in child.children:
                     if sub.type in ("identifier", "type_identifier"):
                         result.heritage.append((class_name, "implements", sub.text.decode()))
+                    elif sub.type == "generic_type":
+                        name_node = sub.child_by_field_name("name")
+                        if name_node is not None:
+                            result.heritage.append((class_name, "implements", name_node.text.decode()))
 
     def _extract_interface(self, node: Node, source: str, result: ParseResult) -> None:
         name_node = node.child_by_field_name("name")
@@ -698,7 +706,7 @@ class TypeScriptParser(LanguageParser):
         """Walk up the tree to find the enclosing class name."""
         current = node.parent
         while current is not None:
-            if current.type == "class_declaration":
+            if current.type in ("class_declaration", "class_expression"):
                 name_node = current.child_by_field_name("name")
                 if name_node is not None:
                     return name_node.text.decode()

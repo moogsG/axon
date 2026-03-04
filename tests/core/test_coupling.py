@@ -1,5 +1,3 @@
-"""Tests for the change coupling analysis phase (Phase 11)."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,12 +11,6 @@ from axon.core.ingestion.coupling import (
     calculate_coupling,
     process_coupling,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
@@ -44,17 +36,8 @@ def graph() -> KnowledgeGraph:
 
     return g
 
-
-# ---------------------------------------------------------------------------
-# build_cochange_matrix tests
-# ---------------------------------------------------------------------------
-
-
 class TestBuildCochangeMatrix:
-    """build_cochange_matrix produces correct pairwise counts."""
-
     def test_build_cochange_matrix(self) -> None:
-        """Correct pair counts from commit data."""
         commits = [
             ["src/auth.py", "src/models.py"],
             ["src/auth.py", "src/models.py"],
@@ -72,7 +55,6 @@ class TestBuildCochangeMatrix:
         assert matrix[pair_vu] == 1
 
     def test_build_cochange_matrix_min_threshold(self) -> None:
-        """Pairs below min_cochanges are filtered out."""
         commits = [
             ["src/auth.py", "src/models.py"],
             ["src/auth.py", "src/models.py"],
@@ -88,21 +70,11 @@ class TestBuildCochangeMatrix:
         assert ("src/utils.py", "src/views.py") not in matrix
 
     def test_build_cochange_matrix_empty(self) -> None:
-        """Empty commits list returns an empty dict."""
         matrix = build_cochange_matrix([], min_cochanges=1)
         assert matrix == {}
 
-
-# ---------------------------------------------------------------------------
-# calculate_coupling tests
-# ---------------------------------------------------------------------------
-
-
 class TestCalculateCoupling:
-    """calculate_coupling produces correct strength values."""
-
     def test_calculate_coupling(self) -> None:
-        """Coupling = co_changes / max(total_a, total_b)."""
         total_changes = {"src/auth.py": 10, "src/models.py": 5}
         strength = calculate_coupling(
             "src/auth.py", "src/models.py", co_changes=5, total_changes=total_changes
@@ -111,7 +83,6 @@ class TestCalculateCoupling:
         assert strength == pytest.approx(0.5)
 
     def test_calculate_coupling_equal_changes(self) -> None:
-        """When both files have equal total changes, coupling = co_changes / total."""
         total_changes = {"src/auth.py": 8, "src/models.py": 8}
         strength = calculate_coupling(
             "src/auth.py", "src/models.py", co_changes=6, total_changes=total_changes
@@ -119,19 +90,17 @@ class TestCalculateCoupling:
         # 6 / max(8, 8) = 6 / 8 = 0.75
         assert strength == pytest.approx(0.75)
 
-
-# ---------------------------------------------------------------------------
-# process_coupling tests
-# ---------------------------------------------------------------------------
-
+    def test_calculate_coupling_zero_total_changes(self) -> None:
+        total_changes = {"src/auth.py": 0, "src/models.py": 0}
+        strength = calculate_coupling(
+            "src/auth.py", "src/models.py", co_changes=0, total_changes=total_changes
+        )
+        assert strength == 0.0
 
 class TestProcessCoupling:
-    """process_coupling creates COUPLED_WITH relationships in the graph."""
-
     def test_process_coupling_creates_relationships(
         self, graph: KnowledgeGraph
     ) -> None:
-        """Mock git log via the commits parameter, verify COUPLED_WITH edges."""
         # auth.py and models.py change together 4 times out of 5 commits each.
         # views.py and utils.py change together only once.
         commits = [
@@ -149,6 +118,7 @@ class TestProcessCoupling:
             Path("/fake/repo"),
             min_strength=0.3,
             commits=commits,
+            min_cochanges=1,
         )
 
         # auth+models: coupling = 4 / max(5, 5) = 0.8 >= 0.3 -> created
@@ -175,7 +145,6 @@ class TestProcessCoupling:
         assert auth_models_rel.properties["co_changes"] == 4
 
     def test_process_coupling_no_git(self, graph: KnowledgeGraph) -> None:
-        """Non-git repo returns 0 gracefully (parse_git_log returns [])."""
         count = process_coupling(
             graph,
             Path("/nonexistent/repo"),
@@ -190,7 +159,6 @@ class TestProcessCoupling:
     def test_process_coupling_filters_weak_pairs(
         self, graph: KnowledgeGraph
     ) -> None:
-        """Pairs below min_strength are not added to the graph."""
         # auth changes 10 times, models 10 times, but they co-change only twice.
         # coupling = 2/10 = 0.2 which is below min_strength=0.3
         commits = [
@@ -221,7 +189,6 @@ class TestProcessCoupling:
     def test_process_coupling_relationship_id_format(
         self, graph: KnowledgeGraph
     ) -> None:
-        """Relationship IDs follow the coupled:{id_a}->{id_b} pattern."""
         commits = [
             ["src/auth.py", "src/models.py"],
             ["src/auth.py", "src/models.py"],

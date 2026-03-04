@@ -1,31 +1,15 @@
-"""Tests for the TypeScript / TSX / JavaScript parser."""
-
 from __future__ import annotations
 
 import pytest
 
 from axon.core.parsers.typescript import TypeScriptParser
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def ts_parser() -> TypeScriptParser:
     return TypeScriptParser(dialect="typescript")
 
-
 @pytest.fixture
 def js_parser() -> TypeScriptParser:
     return TypeScriptParser(dialect="javascript")
-
-
-# ---------------------------------------------------------------------------
-# 1. Parse TypeScript function declaration
-# ---------------------------------------------------------------------------
-
-
 def test_parse_ts_function_declaration(ts_parser: TypeScriptParser) -> None:
     code = """\
 function greet(name: string): string {
@@ -42,13 +26,6 @@ function greet(name: string): string {
     assert fn.start_line == 1
     assert fn.end_line == 3
     assert "function greet" in fn.content
-
-
-# ---------------------------------------------------------------------------
-# 2. Parse arrow function with type refs
-# ---------------------------------------------------------------------------
-
-
 def test_parse_arrow_function_with_types(ts_parser: TypeScriptParser) -> None:
     code = """\
 const validate = (user: User): boolean => {
@@ -71,13 +48,6 @@ const validate = (user: User): boolean => {
     assert len(user_refs) == 1
     assert user_refs[0].kind == "param"
     assert user_refs[0].param_name == "user"
-
-
-# ---------------------------------------------------------------------------
-# 3. Parse class with methods and heritage
-# ---------------------------------------------------------------------------
-
-
 def test_parse_class_with_heritage(ts_parser: TypeScriptParser) -> None:
     code = """\
 class Admin extends User implements Serializable {
@@ -105,13 +75,6 @@ class Admin extends User implements Serializable {
     this_calls = [c for c in result.calls if c.receiver == "this"]
     assert len(this_calls) == 1
     assert this_calls[0].name == "validate"
-
-
-# ---------------------------------------------------------------------------
-# 4. Parse interface
-# ---------------------------------------------------------------------------
-
-
 def test_parse_interface(ts_parser: TypeScriptParser) -> None:
     code = """\
 interface AuthConfig {
@@ -126,13 +89,6 @@ interface AuthConfig {
     assert interfaces[0].name == "AuthConfig"
     assert interfaces[0].start_line == 1
     assert interfaces[0].end_line == 4
-
-
-# ---------------------------------------------------------------------------
-# 5. Parse type alias
-# ---------------------------------------------------------------------------
-
-
 def test_parse_type_alias(ts_parser: TypeScriptParser) -> None:
     code = """\
 type UserId = string | number;
@@ -142,13 +98,6 @@ type UserId = string | number;
     type_aliases = [s for s in result.symbols if s.kind == "type_alias"]
     assert len(type_aliases) == 1
     assert type_aliases[0].name == "UserId"
-
-
-# ---------------------------------------------------------------------------
-# 6. Parse imports (named, namespace, default)
-# ---------------------------------------------------------------------------
-
-
 def test_parse_imports(ts_parser: TypeScriptParser) -> None:
     code = """\
 import { User, Admin } from './models';
@@ -175,13 +124,6 @@ import express from 'express';
     default = [i for i in result.imports if i.module == "express"][0]
     assert default.names == ["express"]
     assert default.is_relative is False
-
-
-# ---------------------------------------------------------------------------
-# 7. Parse JavaScript (no types, require)
-# ---------------------------------------------------------------------------
-
-
 def test_parse_javascript(js_parser: TypeScriptParser) -> None:
     code = """\
 function hello(name) {
@@ -207,17 +149,9 @@ const foo = require('./bar');
     log_calls = [c for c in result.calls if c.name == "log"]
     assert len(log_calls) == 1
     assert log_calls[0].receiver == "console"
-
-
-# ---------------------------------------------------------------------------
-# Edge cases
-# ---------------------------------------------------------------------------
-
-
 def test_invalid_dialect_raises() -> None:
     with pytest.raises(ValueError, match="Unknown dialect"):
         TypeScriptParser(dialect="coffeescript")
-
 
 def test_empty_source(ts_parser: TypeScriptParser) -> None:
     result = ts_parser.parse("", "empty.ts")
@@ -225,7 +159,6 @@ def test_empty_source(ts_parser: TypeScriptParser) -> None:
     assert result.imports == []
     assert result.calls == []
     assert result.type_refs == []
-
 
 def test_interface_extends_heritage(ts_parser: TypeScriptParser) -> None:
     code = """\
@@ -239,7 +172,6 @@ interface Foo extends Bar {
     assert len(interfaces) == 1
     assert ("Foo", "extends", "Bar") in result.heritage
 
-
 def test_function_expression(js_parser: TypeScriptParser) -> None:
     code = """\
 const add = function(a, b) { return a + b; };
@@ -250,7 +182,6 @@ const add = function(a, b) { return a + b; };
     assert len(functions) == 1
     assert functions[0].name == "add"
 
-
 def test_variable_type_annotation(ts_parser: TypeScriptParser) -> None:
     code = """\
 const config: AppConfig = getConfig();
@@ -260,7 +191,6 @@ const config: AppConfig = getConfig();
     var_types = [t for t in result.type_refs if t.kind == "variable"]
     assert len(var_types) == 1
     assert var_types[0].name == "AppConfig"
-
 
 def test_return_type_ref(ts_parser: TypeScriptParser) -> None:
     code = """\
@@ -273,15 +203,7 @@ function getUser(): UserModel {
     return_types = [t for t in result.type_refs if t.kind == "return"]
     assert len(return_types) == 1
     assert return_types[0].name == "UserModel"
-
-
-# ---------------------------------------------------------------------------
-# new expression handling
-# ---------------------------------------------------------------------------
-
-
 def test_new_expression_simple(js_parser: TypeScriptParser) -> None:
-    """``new ClassName(args)`` creates a CallInfo targeting the class."""
     code = """\
 function init() {
     const mgr = new AchievementManager(this);
@@ -294,9 +216,7 @@ function init() {
     assert new_calls[0].line == 2
     assert new_calls[0].receiver == ""
 
-
 def test_new_expression_with_member(ts_parser: TypeScriptParser) -> None:
-    """``new module.ClassName()`` captures receiver and class name."""
     code = """\
 const db = new pg.Client();
 """
@@ -306,9 +226,7 @@ const db = new pg.Client();
     assert len(new_calls) == 1
     assert new_calls[0].receiver == "pg"
 
-
 def test_new_expression_callback_args(js_parser: TypeScriptParser) -> None:
-    """``new Cls(callbackFn)`` captures bare identifier arguments."""
     code = """\
 const watcher = new FileWatcher(onChange);
 """
@@ -317,7 +235,6 @@ const watcher = new FileWatcher(onChange);
     new_calls = [c for c in result.calls if c.name == "FileWatcher"]
     assert len(new_calls) == 1
     assert "onChange" in new_calls[0].arguments
-
 
 def test_new_expression_cookie_clicker_pattern(js_parser: TypeScriptParser) -> None:
     """Real-world pattern: exported class instantiated with ``new``."""
@@ -346,15 +263,7 @@ export class Game {
     check_calls = [c for c in result.calls if c.name == "check"]
     assert len(check_calls) == 1
     assert "achievementManager" in check_calls[0].receiver
-
-
-# ---------------------------------------------------------------------------
-# module.exports handling
-# ---------------------------------------------------------------------------
-
-
 def test_module_exports_identifier(js_parser: TypeScriptParser) -> None:
-    """``module.exports = ClassName`` marks ClassName as exported."""
     code = """\
 class AchievementManager {}
 module.exports = AchievementManager;
@@ -363,9 +272,7 @@ module.exports = AchievementManager;
 
     assert "AchievementManager" in result.exports
 
-
 def test_module_exports_object(js_parser: TypeScriptParser) -> None:
-    """``module.exports = { A, B }`` marks both A and B as exported."""
     code = """\
 class Foo {}
 class Bar {}

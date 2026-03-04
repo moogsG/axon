@@ -1,5 +1,3 @@
-"""Tests for the pipeline orchestrator (pipeline.py)."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,12 +6,6 @@ import pytest
 
 from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
 from axon.core.storage.kuzu_backend import KuzuBackend
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def tmp_repo(tmp_path: Path) -> Path:
@@ -65,14 +57,7 @@ def storage(tmp_path: Path) -> KuzuBackend:
     backend.close()
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_basic
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineBasic:
-    """run_pipeline completes without error and returns a PipelineResult."""
-
     def test_run_pipeline_basic(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -82,14 +67,7 @@ class TestRunPipelineBasic:
         assert result.duration_seconds > 0.0
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_file_count
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineFileCount:
-    """The result reports exactly 3 files from the fixture repo."""
-
     def test_run_pipeline_file_count(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -98,14 +76,7 @@ class TestRunPipelineFileCount:
         assert result.files == 3
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_finds_symbols
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineFindsSymbols:
-    """At least 3 symbols are discovered (main, validate, helper)."""
-
     def test_run_pipeline_finds_symbols(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -114,14 +85,7 @@ class TestRunPipelineFindsSymbols:
         assert result.symbols >= 3
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_finds_relationships
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineFindsRelationships:
-    """Relationships are created (CONTAINS, DEFINES, IMPORTS, CALLS)."""
-
     def test_run_pipeline_finds_relationships(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -130,14 +94,7 @@ class TestRunPipelineFindsRelationships:
         assert result.relationships > 0
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_progress_callback
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineProgressCallback:
-    """The progress callback is invoked with expected phase names."""
-
     def test_run_pipeline_progress_callback(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -161,14 +118,7 @@ class TestRunPipelineProgressCallback:
         assert "Loading to storage" in phase_names
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_loads_to_storage
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineLoadsToStorage:
-    """After the pipeline runs, nodes are retrievable from storage."""
-
     def test_run_pipeline_loads_to_storage(
         self, tmp_repo: Path, storage: KuzuBackend
     ) -> None:
@@ -179,11 +129,6 @@ class TestRunPipelineLoadsToStorage:
         node = storage.get_node("file:src/main.py:")
         assert node is not None
         assert node.name == "main.py"
-
-
-# ---------------------------------------------------------------------------
-# Richer fixture for full-phase tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -252,14 +197,7 @@ def rich_storage(tmp_path: Path) -> KuzuBackend:
     backend.close()
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_full_phases
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineFullPhases:
-    """Pipeline phases 7-11 populate the corresponding PipelineResult fields."""
-
     def test_run_pipeline_full_phases(
         self, rich_repo: Path, rich_storage: KuzuBackend
     ) -> None:
@@ -291,14 +229,7 @@ class TestRunPipelineFullPhases:
         assert result.coupled_pairs == 0
 
 
-# ---------------------------------------------------------------------------
-# test_run_pipeline_progress_includes_new_phases
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineProgressIncludesNewPhases:
-    """Progress callback includes phase names for phases 7-11."""
-
     def test_run_pipeline_progress_includes_new_phases(
         self, rich_repo: Path, rich_storage: KuzuBackend
     ) -> None:
@@ -336,18 +267,10 @@ class TestRunPipelineProgressIncludesNewPhases:
             assert 1.0 in phase_pcts, f"{phase_name} missing 1.0 progress"
 
 
-# ---------------------------------------------------------------------------
-# Embedding phase integration
-# ---------------------------------------------------------------------------
-
-
 class TestRunPipelineEmbeddings:
-    """The pipeline's embedding phase fires correctly."""
-
     def test_embedding_phase_in_progress(
         self, rich_repo: Path, rich_storage: KuzuBackend
     ) -> None:
-        """Progress callback includes 'Generating embeddings' phase."""
         calls: list[tuple[str, float]] = []
 
         def callback(phase: str, pct: float) -> None:
@@ -361,7 +284,6 @@ class TestRunPipelineEmbeddings:
     def test_result_symbols_set_even_if_embed_fails(
         self, rich_repo: Path, rich_storage: KuzuBackend
     ) -> None:
-        """result.symbols is correct even when embedding phase raises."""
         from unittest.mock import patch
 
         with patch(
@@ -376,7 +298,6 @@ class TestRunPipelineEmbeddings:
         assert result.embeddings == 0
 
     def test_no_storage_skips_embedding(self, rich_repo: Path) -> None:
-        """When storage=None, embedding phase is skipped entirely."""
         calls: list[tuple[str, float]] = []
 
         def callback(phase: str, pct: float) -> None:

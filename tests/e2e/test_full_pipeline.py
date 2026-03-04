@@ -1,10 +1,3 @@
-"""End-to-end tests for the full Axon pipeline.
-
-Creates a realistic multi-language sample repository in a temp directory,
-runs the full pipeline, and verifies that every layer — from parsing through
-storage to MCP tool queries — produces correct results.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,11 +7,6 @@ import pytest
 from axon.core.ingestion.pipeline import PipelineResult, run_pipeline
 from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.tools import handle_context, handle_dead_code, handle_impact, handle_query
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -39,7 +27,9 @@ def sample_repo(tmp_path: Path) -> Path:
             +-- handler.ts      exported handler function, calls process
             +-- process.ts      process function
     """
-    src = tmp_path / "src"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    src = repo / "src"
     src.mkdir()
 
     (src / "models.py").write_text(
@@ -86,7 +76,7 @@ def sample_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
-    lib = tmp_path / "lib"
+    lib = repo / "lib"
     lib.mkdir()
 
     (lib / "handler.ts").write_text(
@@ -105,7 +95,7 @@ def sample_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
-    return tmp_path
+    return repo
 
 
 @pytest.fixture()
@@ -127,27 +117,13 @@ def pipeline_result(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Test: File count
-# ---------------------------------------------------------------------------
-
-
 class TestFileCount:
-    """The pipeline discovers all source files."""
-
     def test_discovers_all_files(self, pipeline_result: PipelineResult) -> None:
         # 6 Python files + 2 TypeScript files = 8
         assert pipeline_result.files == 8
 
 
-# ---------------------------------------------------------------------------
-# Test: Symbol count
-# ---------------------------------------------------------------------------
-
-
 class TestSymbolCount:
-    """At least 10 symbols are found across both languages."""
-
     def test_minimum_symbols(self, pipeline_result: PipelineResult) -> None:
         # Python: User, __init__, to_dict, validate, check, verify, orphan_func
         # TS: handler, process
@@ -155,14 +131,7 @@ class TestSymbolCount:
         assert pipeline_result.symbols >= 9
 
 
-# ---------------------------------------------------------------------------
-# Test: Relationship types
-# ---------------------------------------------------------------------------
-
-
 class TestRelationshipTypes:
-    """The expected relationship types are present in the pipeline result."""
-
     def test_relationships_exist(self, pipeline_result: PipelineResult) -> None:
         assert pipeline_result.relationships > 0
 
@@ -208,14 +177,7 @@ class TestRelationshipTypes:
         assert rows[0][0] > 0
 
 
-# ---------------------------------------------------------------------------
-# Test: Dead code detection
-# ---------------------------------------------------------------------------
-
-
 class TestDeadCode:
-    """orphan_func is detected as dead code."""
-
     def test_dead_code_detected(self, pipeline_result: PipelineResult) -> None:
         assert pipeline_result.dead_code >= 1
 
@@ -227,14 +189,7 @@ class TestDeadCode:
         assert node.is_dead is True
 
 
-# ---------------------------------------------------------------------------
-# Test: FTS search works
-# ---------------------------------------------------------------------------
-
-
 class TestFTSSearch:
-    """Full-text search returns results for known symbols."""
-
     def test_search_validate(
         self, sample_repo: Path, storage: KuzuBackend, pipeline_result: PipelineResult
     ) -> None:
@@ -252,14 +207,7 @@ class TestFTSSearch:
         assert "handler" in names
 
 
-# ---------------------------------------------------------------------------
-# Test: MCP tools — handle_context
-# ---------------------------------------------------------------------------
-
-
 class TestMCPContext:
-    """handle_context returns caller/callee information."""
-
     def test_context_validate(
         self, sample_repo: Path, storage: KuzuBackend, pipeline_result: PipelineResult
     ) -> None:
@@ -277,14 +225,7 @@ class TestMCPContext:
         assert "check" in result.lower()
 
 
-# ---------------------------------------------------------------------------
-# Test: MCP tools — handle_impact
-# ---------------------------------------------------------------------------
-
-
 class TestMCPImpact:
-    """handle_impact returns upstream callers."""
-
     def test_impact_verify(
         self, sample_repo: Path, storage: KuzuBackend, pipeline_result: PipelineResult
     ) -> None:
@@ -295,14 +236,7 @@ class TestMCPImpact:
         assert "verify" in result.lower()
 
 
-# ---------------------------------------------------------------------------
-# Test: MCP tools — handle_query
-# ---------------------------------------------------------------------------
-
-
 class TestMCPQuery:
-    """handle_query returns search results."""
-
     def test_query_user(
         self, sample_repo: Path, storage: KuzuBackend, pipeline_result: PipelineResult
     ) -> None:
@@ -310,14 +244,7 @@ class TestMCPQuery:
         assert "User" in result
 
 
-# ---------------------------------------------------------------------------
-# Test: MCP tools — handle_dead_code
-# ---------------------------------------------------------------------------
-
-
 class TestMCPDeadCode:
-    """handle_dead_code lists the dead code symbols."""
-
     def test_dead_code_tool(
         self, sample_repo: Path, storage: KuzuBackend, pipeline_result: PipelineResult
     ) -> None:
@@ -325,21 +252,20 @@ class TestMCPDeadCode:
         assert "orphan_func" in result
 
 
-# ---------------------------------------------------------------------------
-# Test: Pipeline idempotency
-# ---------------------------------------------------------------------------
-
-
 class TestIdempotency:
-    """Running the pipeline twice produces the same stats."""
-
     def test_idempotent(
         self, sample_repo: Path, storage: KuzuBackend
     ) -> None:
         _, result1 = run_pipeline(sample_repo, storage)
+        fn_count_after_run1 = storage.execute_raw("MATCH (n:Function) RETURN count(n)")[0][0]
+
         _, result2 = run_pipeline(sample_repo, storage)
+        fn_count_after_run2 = storage.execute_raw("MATCH (n:Function) RETURN count(n)")[0][0]
 
         assert result1.files == result2.files
         assert result1.symbols == result2.symbols
         assert result1.relationships == result2.relationships
         assert result1.dead_code == result2.dead_code
+
+        # DB-level check: running the pipeline twice must not duplicate Function nodes.
+        assert fn_count_after_run2 == fn_count_after_run1

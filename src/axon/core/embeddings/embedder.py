@@ -11,7 +11,7 @@ richness that makes embedding worthwhile.
 
 from __future__ import annotations
 
-from functools import lru_cache
+import threading
 from typing import TYPE_CHECKING
 
 from axon.core.embeddings.text import build_class_method_index, generate_text
@@ -23,11 +23,31 @@ if TYPE_CHECKING:
     from fastembed import TextEmbedding
 
 
-@lru_cache(maxsize=4)
-def _get_model(model_name: str) -> TextEmbedding:
-    from fastembed import TextEmbedding
+_model_cache: dict[str, "TextEmbedding"] = {}
+_model_lock = threading.Lock()
 
-    return TextEmbedding(model_name=model_name)
+
+def _get_model(model_name: str) -> "TextEmbedding":
+    cached = _model_cache.get(model_name)
+    if cached is not None:
+        return cached
+    with _model_lock:
+        cached = _model_cache.get(model_name)
+        if cached is not None:
+            return cached
+        from fastembed import TextEmbedding
+        model = TextEmbedding(model_name=model_name)
+        _model_cache[model_name] = model
+        return model
+
+
+def _get_model_cache_clear() -> None:
+    """Clear the model cache (used in tests)."""
+    with _model_lock:
+        _model_cache.clear()
+
+
+_get_model.cache_clear = _get_model_cache_clear  # type: ignore[attr-defined]
 
 # Labels worth embedding — skip Folder, Community, Process (structural only).
 EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
@@ -41,6 +61,20 @@ EMBEDDABLE_LABELS: frozenset[NodeLabel] = frozenset(
         NodeLabel.ENUM,
     }
 )
+
+_DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+def embed_query(query: str, model_name: str = _DEFAULT_MODEL) -> list[float] | None:
+    """Embed a single query string, returning ``None`` on failure."""
+    if not query or not query.strip():
+        return None
+    try:
+        model = _get_model(model_name)
+        return list(next(iter(model.embed([query]))))
+    except Exception:
+        return None
+
 
 def embed_graph(
     graph: KnowledgeGraph,
@@ -64,13 +98,23 @@ def embed_graph(
         each carrying the node's ID and its embedding vector as a plain
         Python ``list[float]``.
     """
-    nodes = [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
+    all_nodes = [n for n in graph.iter_nodes() if n.label in EMBEDDABLE_LABELS]
 
-    if not nodes:
+    if not all_nodes:
         return []
 
     class_method_idx = build_class_method_index(graph)
-    texts = [generate_text(node, graph, class_method_idx) for node in nodes]
+
+    texts: list[str] = []
+    nodes = []
+    for node in all_nodes:
+        text = generate_text(node, graph, class_method_idx)
+        if text and text.strip():
+            texts.append(text)
+            nodes.append(node)
+
+    if not texts:
+        return []
 
     model = _get_model(model_name)
     vectors = list(model.embed(texts, batch_size=batch_size))
@@ -104,11 +148,21 @@ def embed_nodes(
         return []
 
     class_method_idx = build_class_method_index(graph)
-    model = _get_model(model_name)
 
-    texts = [generate_text(n, graph, class_method_idx) for n in nodes]
+    texts: list[str] = []
+    valid_nodes = []
+    for node in nodes:
+        text = generate_text(node, graph, class_method_idx)
+        if text and text.strip():
+            texts.append(text)
+            valid_nodes.append(node)
+
+    if not texts:
+        return []
+
+    model = _get_model(model_name)
     embeddings: list[NodeEmbedding] = []
-    for node, vector in zip(nodes, model.embed(texts, batch_size=batch_size)):
+    for node, vector in zip(valid_nodes, model.embed(texts, batch_size=batch_size)):
         embeddings.append(
             NodeEmbedding(
                 node_id=node.id,

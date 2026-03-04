@@ -1,18 +1,10 @@
-"""Tests for the storage backend abstraction layer."""
-
 from __future__ import annotations
 
 from axon.core.storage.base import NodeEmbedding, SearchResult, StorageBackend
 
-
-# ---------------------------------------------------------------------------
 # SearchResult
-# ---------------------------------------------------------------------------
-
 
 class TestSearchResult:
-    """Verify SearchResult dataclass defaults and construction."""
-
     def test_creation_with_defaults(self) -> None:
         result = SearchResult(node_id="n1", score=0.95)
         assert result.node_id == "n1"
@@ -38,15 +30,9 @@ class TestSearchResult:
         assert result.label == "function"
         assert result.snippet == "def main() -> None: ..."
 
-
-# ---------------------------------------------------------------------------
 # NodeEmbedding
-# ---------------------------------------------------------------------------
-
 
 class TestNodeEmbedding:
-    """Verify NodeEmbedding dataclass defaults and construction."""
-
     def test_creation_with_defaults(self) -> None:
         emb = NodeEmbedding(node_id="n1")
         assert emb.node_id == "n1"
@@ -59,27 +45,18 @@ class TestNodeEmbedding:
         assert emb.embedding == [0.1, 0.2, 0.3]
 
     def test_embedding_default_is_independent(self) -> None:
-        """Mutable default must not be shared across instances."""
         a = NodeEmbedding(node_id="a")
         b = NodeEmbedding(node_id="b")
         a.embedding.append(1.0)
         assert b.embedding == []
 
-
-# ---------------------------------------------------------------------------
 # StorageBackend protocol
-# ---------------------------------------------------------------------------
-
 
 class TestStorageBackend:
-    """Verify the StorageBackend protocol is runtime-checkable."""
-
     def test_is_a_type(self) -> None:
         assert isinstance(StorageBackend, type)
 
     def test_runtime_checkable(self) -> None:
-        """A class implementing all required methods should be recognised."""
-
         class _DummyBackend:
             def initialize(self, path):
                 pass
@@ -171,8 +148,6 @@ class TestStorageBackend:
         assert isinstance(_DummyBackend(), StorageBackend)
 
     def test_non_conforming_class_fails(self) -> None:
-        """A class missing required methods should NOT match the protocol."""
-
         class _Incomplete:
             pass
 

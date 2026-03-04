@@ -11,15 +11,18 @@ from __future__ import annotations
 from axon.core.graph.graph import KnowledgeGraph
 from axon.core.graph.model import GraphNode, NodeLabel, RelType
 
-def build_class_method_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
-    """Pre-build a mapping from class names to their sorted method names.
+def build_class_method_index(graph: KnowledgeGraph) -> dict[tuple[str, str], list[str]]:
+    """Pre-build a mapping from (class_name, file_path) to sorted method names.
 
     Avoids O(classes × methods) scanning when generating text for each class.
+    Keyed by (class_name, file_path) to avoid collisions between classes with
+    the same name in different files.
     """
-    index: dict[str, list[str]] = {}
+    index: dict[tuple[str, str], list[str]] = {}
     for method in graph.get_nodes_by_label(NodeLabel.METHOD):
         if method.class_name:
-            index.setdefault(method.class_name, []).append(method.name)
+            key = (method.class_name, method.file_path)
+            index.setdefault(key, []).append(method.name)
     for names in index.values():
         names.sort()
     return index
@@ -27,7 +30,7 @@ def build_class_method_index(graph: KnowledgeGraph) -> dict[str, list[str]]:
 def generate_text(
     node: GraphNode,
     graph: KnowledgeGraph,
-    class_method_index: dict[str, list[str]] | None = None,
+    class_method_index: dict[tuple[str, str], list[str]] | None = None,
 ) -> str:
     """Produce a natural-language description of *node* using graph context.
 
@@ -88,13 +91,13 @@ def _text_for_callable(node: GraphNode, graph: KnowledgeGraph) -> str:
 def _text_for_class(
     node: GraphNode,
     graph: KnowledgeGraph,
-    class_method_index: dict[str, list[str]] | None = None,
+    class_method_index: dict[tuple[str, str], list[str]] | None = None,
 ) -> str:
     """Build text for CLASS nodes."""
     lines: list[str] = [_header(node)]
 
     if class_method_index is not None:
-        method_names = class_method_index.get(node.name, [])
+        method_names = class_method_index.get((node.name, node.file_path), [])
     else:
         method_names = _class_method_names(node.name, graph)
     if method_names:

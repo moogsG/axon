@@ -39,10 +39,39 @@ def build_file_index(graph: KnowledgeGraph) -> dict[str, str]:
     file_nodes = graph.get_nodes_by_label(NodeLabel.FILE)
     return {node.file_path: node.id for node in file_nodes}
 
+def _detect_source_roots(file_index: dict[str, str]) -> set[str]:
+    """Detect Python source root directories from the file index.
+
+    A source root is a directory that contains a top-level Python package
+    (a directory with ``__init__.py`` whose parent does NOT have
+    ``__init__.py``).  For a ``src/`` layout like ``src/mypackage/__init__.py``
+    where ``src/__init__.py`` does not exist, ``src`` is the source root.
+
+    Limitation: nested namespace packages (PEP 420) without ``__init__.py``
+    at intermediate levels are not detected. This heuristic assumes each
+    top-level package has an ``__init__.py``.
+
+    Returns:
+        A set of source root prefixes (e.g. ``{"src"}``).
+    """
+    init_dirs: set[str] = set()
+    for path in file_index:
+        if path.endswith("/__init__.py"):
+            init_dirs.add(str(PurePosixPath(path).parent))
+
+    roots: set[str] = set()
+    for d in init_dirs:
+        parent = str(PurePosixPath(d).parent)
+        if parent != "." and parent not in init_dirs:
+            roots.add(parent)
+    return roots
+
+
 def resolve_import_path(
     importing_file: str,
     import_info: ImportInfo,
     file_index: dict[str, str],
+    source_roots: set[str] | None = None,
 ) -> str | None:
     """Resolve an import statement to the target file's node ID.
 
@@ -55,6 +84,9 @@ def resolve_import_path(
             (e.g. ``"src/auth/validate.py"``).
         import_info: The parsed import information.
         file_index: Mapping of relative file paths to their graph node IDs.
+        source_roots: Optional set of source root prefixes discovered by
+            :func:`_detect_source_roots`.  When provided, absolute Python
+            imports are also tried with each prefix prepended.
 
     Returns:
         The node ID of the resolved target file, or ``None`` if the import
@@ -63,7 +95,7 @@ def resolve_import_path(
     language = _detect_language(importing_file)
 
     if language == "python":
-        return _resolve_python(importing_file, import_info, file_index)
+        return _resolve_python(importing_file, import_info, file_index, source_roots)
     if language in ("typescript", "javascript"):
         return _resolve_js_ts(importing_file, import_info, file_index)
 
@@ -84,13 +116,14 @@ def process_imports(
         graph: The knowledge graph to populate with IMPORTS relationships.
     """
     file_index = build_file_index(graph)
+    source_roots = _detect_source_roots(file_index)
     seen: set[tuple[str, str]] = set()
 
     for fpd in parse_data:
         source_file_id = generate_id(NodeLabel.FILE, fpd.file_path)
 
         for imp in fpd.parse_result.imports:
-            target_id = resolve_import_path(fpd.file_path, imp, file_index)
+            target_id = resolve_import_path(fpd.file_path, imp, file_index, source_roots)
             if target_id is None:
                 continue
 
@@ -125,19 +158,21 @@ def _resolve_python(
     importing_file: str,
     import_info: ImportInfo,
     file_index: dict[str, str],
+    source_roots: set[str] | None = None,
 ) -> str | None:
     """Resolve a Python import to a file node ID.
 
     Handles:
     - Relative imports (``is_relative=True``): dot-prefixed module paths
       resolved relative to the importing file's directory.
-    - Absolute imports: treated as dotted paths from the project root.
+    - Absolute imports: treated as dotted paths from the project root,
+      with source root prefix discovery for ``src/`` layouts.
 
     Returns ``None`` for external (not in file_index) imports.
     """
     if import_info.is_relative:
         return _resolve_python_relative(importing_file, import_info, file_index)
-    return _resolve_python_absolute(import_info, file_index)
+    return _resolve_python_absolute(import_info, file_index, source_roots)
 
 def _resolve_python_relative(
     importing_file: str,
@@ -153,6 +188,9 @@ def _resolve_python_relative(
     ``from ..models import User``  -> two dots -> parent directory
     """
     module = import_info.module
+    # Contract: ImportInfo.module includes leading dots for relative imports.
+    # e.g. ".utils" -> 1 dot (same dir), "..models" -> 2 dots (parent dir).
+    assert module.startswith("."), f"Expected relative import, got {module!r}"
 
     dot_count = 0
     for ch in module:
@@ -178,17 +216,34 @@ def _resolve_python_relative(
 def _resolve_python_absolute(
     import_info: ImportInfo,
     file_index: dict[str, str],
+    source_roots: set[str] | None = None,
 ) -> str | None:
     """Resolve an absolute Python import (``from mypackage.auth import validate``).
 
     Converts the dotted module path to a filesystem path and looks it up
-    in the file index.  Returns ``None`` for external packages not present
-    in the project.
+    in the file index.  For ``src/`` layout projects where file paths have
+    a prefix not present in the module name (e.g. ``src/mypackage/...``),
+    also tries each discovered source root prefix.
+
+    Returns ``None`` for external packages not present in the project.
     """
     module = import_info.module
     segments = module.split(".")
     target_path = str(PurePosixPath(*segments))
-    return _try_python_paths(target_path, file_index)
+
+    # Try direct match first (flat layout).
+    result = _try_python_paths(target_path, file_index)
+    if result:
+        return result
+
+    # Try with each source root prefix (src/ layout).
+    if source_roots:
+        for root in source_roots:
+            result = _try_python_paths(f"{root}/{target_path}", file_index)
+            if result:
+                return result
+
+    return None
 
 def _try_python_paths(base_path: str, file_index: dict[str, str]) -> str | None:
     """Try common Python file resolution patterns for *base_path*.

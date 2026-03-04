@@ -1,5 +1,3 @@
-"""Tests for the import resolution phase (Phase 4)."""
-
 from __future__ import annotations
 
 import pytest
@@ -19,11 +17,6 @@ from axon.core.ingestion.imports import (
 from axon.core.ingestion.parser_phase import FileParseData
 from axon.core.parsers.base import ImportInfo, ParseResult
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 _FILE_PATHS = [
     # Python files
     ("src/auth/validate.py", "python"),
@@ -38,7 +31,6 @@ _FILE_PATHS = [
     ("lib/models/user.ts", "typescript"),
     ("lib/models/index.ts", "typescript"),
 ]
-
 
 @pytest.fixture()
 def graph() -> KnowledgeGraph:
@@ -57,21 +49,12 @@ def graph() -> KnowledgeGraph:
         )
     return g
 
-
 @pytest.fixture()
 def file_index(graph: KnowledgeGraph) -> dict[str, str]:
     """Return the file index built from the fixture graph."""
     return build_file_index(graph)
 
-
-# ---------------------------------------------------------------------------
-# build_file_index
-# ---------------------------------------------------------------------------
-
-
 class TestBuildFileIndex:
-    """build_file_index creates correct mapping from graph File nodes."""
-
     def test_build_file_index(self, graph: KnowledgeGraph) -> None:
         index = build_file_index(graph)
 
@@ -108,15 +91,7 @@ class TestBuildFileIndex:
         assert len(index) == 1
         assert "src/app.py" in index
 
-
-# ---------------------------------------------------------------------------
-# resolve_import_path — Python
-# ---------------------------------------------------------------------------
-
-
 class TestResolvePythonRelativeImport:
-    """from .utils import helper in src/auth/validate.py -> src/auth/utils.py."""
-
     def test_resolve_python_relative_import(
         self, file_index: dict[str, str]
     ) -> None:
@@ -126,10 +101,7 @@ class TestResolvePythonRelativeImport:
         expected_id = generate_id(NodeLabel.FILE, "src/auth/utils.py")
         assert result == expected_id
 
-
 class TestResolvePythonParentRelative:
-    """from ..models import User in src/auth/validate.py -> src/models/__init__.py."""
-
     def test_resolve_python_parent_relative(
         self, file_index: dict[str, str]
     ) -> None:
@@ -140,7 +112,6 @@ class TestResolvePythonParentRelative:
         assert result == expected_id
 
     def test_resolve_python_parent_relative_direct_module(self) -> None:
-        """When models.py exists instead of models/__init__.py."""
         g = KnowledgeGraph()
         g.add_node(
             GraphNode(
@@ -168,10 +139,71 @@ class TestResolvePythonParentRelative:
         expected_id = generate_id(NodeLabel.FILE, "src/models.py")
         assert result == expected_id
 
+class TestResolvePythonAbsoluteWithSourceRoot:
+    def test_resolve_absolute_with_src_prefix(self) -> None:
+        g = KnowledgeGraph()
+        for path in [
+            "src/auth/__init__.py",
+            "src/auth/validate.py",
+            "src/auth/utils.py",
+            "src/models/__init__.py",
+        ]:
+            g.add_node(
+                GraphNode(
+                    id=generate_id(NodeLabel.FILE, path),
+                    label=NodeLabel.FILE,
+                    name=path.rsplit("/", 1)[-1],
+                    file_path=path,
+                    language="python",
+                )
+            )
+        index = build_file_index(g)
+        from axon.core.ingestion.imports import _detect_source_roots
+        roots = _detect_source_roots(index)
+
+        imp = ImportInfo(module="auth.validate", names=["check"], is_relative=False)
+        result = resolve_import_path("src/auth/utils.py", imp, index, roots)
+
+        expected_id = generate_id(NodeLabel.FILE, "src/auth/validate.py")
+        assert result == expected_id
+
+    def test_resolve_absolute_package_init(self) -> None:
+        g = KnowledgeGraph()
+        for path in [
+            "src/auth/__init__.py",
+            "src/auth/validate.py",
+            "src/models/__init__.py",
+        ]:
+            g.add_node(
+                GraphNode(
+                    id=generate_id(NodeLabel.FILE, path),
+                    label=NodeLabel.FILE,
+                    name=path.rsplit("/", 1)[-1],
+                    file_path=path,
+                    language="python",
+                )
+            )
+        index = build_file_index(g)
+        from axon.core.ingestion.imports import _detect_source_roots
+        roots = _detect_source_roots(index)
+
+        imp = ImportInfo(module="models", names=["User"], is_relative=False)
+        result = resolve_import_path("src/auth/validate.py", imp, index, roots)
+
+        expected_id = generate_id(NodeLabel.FILE, "src/models/__init__.py")
+        assert result == expected_id
+
+    def test_detect_source_roots(self) -> None:
+        index = {
+            "src/mypackage/__init__.py": "id1",
+            "src/mypackage/core/__init__.py": "id2",
+            "src/mypackage/core/utils.py": "id3",
+        }
+        from axon.core.ingestion.imports import _detect_source_roots
+        roots = _detect_source_roots(index)
+        assert "src" in roots
 
 class TestResolvePythonExternal:
-    """import os or from os.path import join -> returns None (external)."""
-
     def test_resolve_python_external_import(
         self, file_index: dict[str, str]
     ) -> None:
@@ -186,15 +218,7 @@ class TestResolvePythonExternal:
         result = resolve_import_path("src/auth/validate.py", imp, file_index)
         assert result is None
 
-
-# ---------------------------------------------------------------------------
-# resolve_import_path — TypeScript / JavaScript
-# ---------------------------------------------------------------------------
-
-
 class TestResolveTsRelative:
-    """import { foo } from './utils' in lib/index.ts -> lib/utils.ts."""
-
     def test_resolve_ts_relative(self, file_index: dict[str, str]) -> None:
         imp = ImportInfo(module="./utils", names=["foo"], is_relative=False)
         result = resolve_import_path("lib/index.ts", imp, file_index)
@@ -202,10 +226,7 @@ class TestResolveTsRelative:
         expected_id = generate_id(NodeLabel.FILE, "lib/utils.ts")
         assert result == expected_id
 
-
 class TestResolveTsDirectoryIndex:
-    """import { User } from './models' in lib/index.ts -> lib/models/index.ts."""
-
     def test_resolve_ts_directory_index(
         self, file_index: dict[str, str]
     ) -> None:
@@ -215,10 +236,7 @@ class TestResolveTsDirectoryIndex:
         expected_id = generate_id(NodeLabel.FILE, "lib/models/index.ts")
         assert result == expected_id
 
-
 class TestResolveTsExternal:
-    """import express from 'express' -> returns None (external)."""
-
     def test_resolve_ts_external(self, file_index: dict[str, str]) -> None:
         imp = ImportInfo(module="express", names=["express"], is_relative=False)
         result = resolve_import_path("lib/index.ts", imp, file_index)
@@ -231,15 +249,7 @@ class TestResolveTsExternal:
         result = resolve_import_path("lib/index.ts", imp, file_index)
         assert result is None
 
-
-# ---------------------------------------------------------------------------
-# process_imports — Integration
-# ---------------------------------------------------------------------------
-
-
 class TestProcessImportsCreatesRelationships:
-    """process_imports creates IMPORTS edges in the graph."""
-
     def test_process_imports_creates_relationships(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -352,10 +362,7 @@ class TestProcessImportsCreatesRelationships:
         imports_rels = graph.get_relationships_by_type(RelType.IMPORTS)
         assert len(imports_rels) == 2
 
-
 class TestProcessImportsNoDuplicates:
-    """Same import twice does not create duplicate edges."""
-
     def test_process_imports_no_duplicates(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -388,8 +395,6 @@ class TestProcessImportsNoDuplicates:
     def test_process_imports_no_duplicates_across_parse_data(
         self, graph: KnowledgeGraph
     ) -> None:
-        """Duplicates are also prevented across separate FileParseData entries
-        for the same file (e.g. if the same file appears twice)."""
         parse_data = [
             FileParseData(
                 file_path="src/auth/validate.py",

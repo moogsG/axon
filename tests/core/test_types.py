@@ -1,5 +1,3 @@
-"""Tests for the type analysis phase (Phase 7)."""
-
 from __future__ import annotations
 
 import pytest
@@ -18,11 +16,6 @@ from axon.core.ingestion.types import process_types
 
 _TYPE_LABELS = (NodeLabel.CLASS, NodeLabel.INTERFACE, NodeLabel.TYPE_ALIAS)
 from axon.core.parsers.base import ParseResult, TypeRef
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 
 def _add_file_node(graph: KnowledgeGraph, path: str) -> str:
@@ -74,11 +67,6 @@ def _add_symbol_node(
         )
     )
     return node_id
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
@@ -135,14 +123,7 @@ def parse_data() -> list[FileParseData]:
     ]
 
 
-# ---------------------------------------------------------------------------
-# build_type_index
-# ---------------------------------------------------------------------------
-
-
 class TestBuildTypeIndex:
-    """build_type_index creates correct mapping from graph type nodes."""
-
     def test_build_type_index(self, graph: KnowledgeGraph) -> None:
         index = build_name_index(graph, _TYPE_LABELS)
 
@@ -169,7 +150,6 @@ class TestBuildTypeIndex:
         assert "validate" not in index
 
     def test_build_type_index_includes_type_alias(self) -> None:
-        """TypeAlias nodes are included."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/aliases.py")
         _add_symbol_node(g, NodeLabel.TYPE_ALIAS, "src/aliases.py", "UserID", 1, 1)
@@ -179,7 +159,6 @@ class TestBuildTypeIndex:
         assert len(index["UserID"]) == 1
 
     def test_build_type_index_multiple_same_name(self) -> None:
-        """Multiple types with the same name produce a list with all IDs."""
         g = KnowledgeGraph()
         _add_file_node(g, "src/a.py")
         _add_file_node(g, "src/b.py")
@@ -191,14 +170,7 @@ class TestBuildTypeIndex:
         assert len(index["Base"]) == 2
 
 
-# ---------------------------------------------------------------------------
-# process_types — creates USES_TYPE relationships
-# ---------------------------------------------------------------------------
-
-
 class TestProcessTypesCreatesUsesType:
-    """process_types creates USES_TYPE edges in the graph."""
-
     def test_process_types_creates_uses_type(
         self,
         graph: KnowledgeGraph,
@@ -222,14 +194,7 @@ class TestProcessTypesCreatesUsesType:
         assert (validate_id, config_id) in pairs
 
 
-# ---------------------------------------------------------------------------
-# process_types — role property
-# ---------------------------------------------------------------------------
-
-
 class TestProcessTypesRoleProperty:
-    """Role property is set correctly on USES_TYPE relationships."""
-
     def test_process_types_role_property(
         self,
         graph: KnowledgeGraph,
@@ -244,14 +209,7 @@ class TestProcessTypesRoleProperty:
             assert rel.properties["role"] == "param"
 
 
-# ---------------------------------------------------------------------------
-# process_types — unresolved types are skipped
-# ---------------------------------------------------------------------------
-
-
 class TestProcessTypesUnresolvedSkipped:
-    """Unknown type names don't crash and produce no relationships."""
-
     def test_process_types_unresolved_skipped(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -278,14 +236,7 @@ class TestProcessTypesUnresolvedSkipped:
         assert len(uses_rels) == 0
 
 
-# ---------------------------------------------------------------------------
-# process_types — no duplicates
-# ---------------------------------------------------------------------------
-
-
 class TestProcessTypesNoDuplicates:
-    """Same type used twice in the same role doesn't duplicate edges."""
-
     def test_process_types_no_duplicates(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -311,14 +262,7 @@ class TestProcessTypesNoDuplicates:
         assert len(uses_rels) == 1
 
 
-# ---------------------------------------------------------------------------
-# process_types — return type creates relationship
-# ---------------------------------------------------------------------------
-
-
 class TestProcessTypesReturnType:
-    """Return type annotation creates USES_TYPE with role='return'."""
-
     def test_process_types_return_type(
         self, graph: KnowledgeGraph
     ) -> None:
@@ -348,3 +292,27 @@ class TestProcessTypesReturnType:
         assert rel.source == validate_id
         assert rel.target == user_id
         assert rel.properties["role"] == "return"
+
+
+class TestProcessTypesOutsideSymbolBoundary:
+    def test_type_ref_outside_symbol_boundary(
+        self, graph: KnowledgeGraph
+    ) -> None:
+        # src/auth.py has validate at lines 1-10.
+        # A TypeRef at line 50 falls outside that boundary.
+        outside_data = [
+            FileParseData(
+                file_path="src/auth.py",
+                language="python",
+                parse_result=ParseResult(
+                    type_refs=[
+                        TypeRef(name="User", kind="param", line=50, param_name="u"),
+                    ],
+                ),
+            ),
+        ]
+
+        process_types(outside_data, graph)
+
+        uses_rels = graph.get_relationships_by_type(RelType.USES_TYPE)
+        assert len(uses_rels) == 0

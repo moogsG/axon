@@ -1,5 +1,3 @@
-"""Tests for the knowledge graph data model."""
-
 from __future__ import annotations
 
 import pytest
@@ -12,15 +10,9 @@ from axon.core.graph.model import (
     generate_id,
 )
 
-
-# ---------------------------------------------------------------------------
 # NodeLabel enum
-# ---------------------------------------------------------------------------
-
 
 class TestNodeLabel:
-    """Verify every expected node label exists and has correct string values."""
-
     EXPECTED = [
         "FILE",
         "FOLDER",
@@ -45,15 +37,9 @@ class TestNodeLabel:
         for label in NodeLabel:
             assert label.value == label.name.lower()
 
-
-# ---------------------------------------------------------------------------
 # RelType enum
-# ---------------------------------------------------------------------------
-
 
 class TestRelType:
-    """Verify every expected relationship type exists."""
-
     EXPECTED = [
         "CONTAINS",
         "DEFINES",
@@ -79,15 +65,9 @@ class TestRelType:
         for rel in RelType:
             assert rel.value == rel.name.lower()
 
-
-# ---------------------------------------------------------------------------
 # generate_id
-# ---------------------------------------------------------------------------
-
 
 class TestGenerateId:
-    """Verify deterministic ID generation."""
-
     def test_with_symbol_name(self) -> None:
         result = generate_id(NodeLabel.FUNCTION, "src/main.py", "do_stuff")
         assert result == "function:src/main.py:do_stuff"
@@ -104,15 +84,9 @@ class TestGenerateId:
         result = generate_id(NodeLabel.TYPE_ALIAS, "types.py", "MyType")
         assert result == "type_alias:types.py:MyType"
 
-
-# ---------------------------------------------------------------------------
 # GraphNode
-# ---------------------------------------------------------------------------
-
 
 class TestGraphNode:
-    """Verify GraphNode dataclass defaults and construction."""
-
     def test_minimal_creation(self) -> None:
         node = GraphNode(id="test:id", label=NodeLabel.FILE, name="main.py")
         assert node.id == "test:id"
@@ -134,7 +108,6 @@ class TestGraphNode:
         assert node.properties == {}
 
     def test_properties_default_is_independent(self) -> None:
-        """Mutable default must not be shared across instances."""
         a = GraphNode(id="a", label=NodeLabel.FILE, name="a.py")
         b = GraphNode(id="b", label=NodeLabel.FILE, name="b.py")
         a.properties["key"] = "val"
@@ -162,15 +135,9 @@ class TestGraphNode:
         assert node.is_entry_point is True
         assert node.properties["complexity"] == 3
 
-
-# ---------------------------------------------------------------------------
 # GraphRelationship
-# ---------------------------------------------------------------------------
-
 
 class TestGraphRelationship:
-    """Verify GraphRelationship dataclass."""
-
     def test_creation(self) -> None:
         rel = GraphRelationship(
             id="r1",

@@ -218,11 +218,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Dispatch a tool call to the appropriate handler."""
     storage = _get_storage()
 
-    if _lock is not None:
-        async with _lock:
+    try:
+        if _lock is not None:
+            async with _lock:
+                result = await asyncio.to_thread(_dispatch_tool, name, arguments, storage)
+        else:
             result = await asyncio.to_thread(_dispatch_tool, name, arguments, storage)
-    else:
-        result = _dispatch_tool(name, arguments, storage)
+    except Exception as exc:
+        logger.exception("Tool %s raised an unhandled exception", name)
+        result = f"Internal error: {exc}"
 
     return [TextContent(type="text", text=result)]
 
@@ -270,7 +274,7 @@ async def read_resource(uri) -> str:
     if _lock is not None:
         async with _lock:
             return await asyncio.to_thread(_dispatch_resource, uri_str, storage)
-    return _dispatch_resource(uri_str, storage)
+    return await asyncio.to_thread(_dispatch_resource, uri_str, storage)
 
 async def main() -> None:
     """Run the Axon MCP server over stdio transport."""
