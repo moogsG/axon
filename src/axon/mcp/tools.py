@@ -10,10 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 from axon.core.cypher_guard import WRITE_KEYWORDS, sanitize_cypher
+from axon.core.ingestion.community import export_to_igraph
+from axon.core.ingestion.dead_code import _is_test_file
 from axon.core.search.hybrid import hybrid_search
 from axon.core.storage.base import StorageBackend
 from axon.core.storage.kuzu_backend import escape_cypher as _escape_cypher
@@ -255,6 +258,37 @@ def handle_context(storage: StorageBackend, symbol: str) -> str:
         lines.append(f"\nType references ({len(type_refs)}):")
         for t in type_refs:
             lines.append(f"  -> {t.name}  {t.file_path}")
+
+    # Heritage (extends / implements)
+    escaped_id = _escape_cypher(node.id)
+    heritage_rows = storage.execute_raw(
+        f"MATCH (n)-[r:CodeRelation]->(parent) "
+        f"WHERE n.id = '{escaped_id}' "
+        f"AND r.rel_type IN ['extends', 'implements'] "
+        f"RETURN parent.name, parent.file_path, r.rel_type"
+    ) or []
+    if heritage_rows:
+        lines.append(f"\nHeritage ({len(heritage_rows)}):")
+        for row in heritage_rows:
+            parent_name = row[0] or "?"
+            parent_file = row[1] or "?"
+            rel = row[2] or "?"
+            lines.append(f"  -> {rel}: {parent_name}  {parent_file}")
+
+    # Imported by (files that import this symbol's file)
+    if node.file_path:
+        escaped_fp = _escape_cypher(node.file_path)
+        import_rows = storage.execute_raw(
+            f"MATCH (a:File)-[r:CodeRelation]->(b:File) "
+            f"WHERE b.file_path = '{escaped_fp}' "
+            f"AND r.rel_type = 'imports' "
+            f"RETURN a.file_path ORDER BY a.file_path"
+        ) or []
+        if import_rows:
+            importers = [r[0] for r in import_rows if r[0]]
+            lines.append(f"\nImported by ({len(importers)}):")
+            for imp in importers:
+                lines.append(f"  -> {imp}")
 
     lines.append("")
     lines.append("Next: Use impact() if planning changes to this symbol.")
@@ -558,6 +592,95 @@ def handle_coupling(
     return "\n".join(lines)
 
 
+def handle_call_path(
+    storage: StorageBackend, from_symbol: str, to_symbol: str, max_depth: int = 10
+) -> str:
+    """Find the shortest call chain between two symbols via BFS."""
+    if not from_symbol or not from_symbol.strip():
+        return "Error: 'from_symbol' parameter is required and cannot be empty."
+    if not to_symbol or not to_symbol.strip():
+        return "Error: 'to_symbol' parameter is required and cannot be empty."
+
+    max_depth = max(1, min(max_depth, MAX_TRAVERSE_DEPTH))
+
+    from_results = _resolve_symbol(storage, from_symbol)
+    if not from_results:
+        return f"Source symbol '{from_symbol}' not found."
+
+    to_results = _resolve_symbol(storage, to_symbol)
+    if not to_results:
+        return f"Target symbol '{to_symbol}' not found."
+
+    src_node = storage.get_node(from_results[0].node_id)
+    tgt_node = storage.get_node(to_results[0].node_id)
+    if not src_node or not tgt_node:
+        return "Could not resolve one or both symbols."
+
+    if src_node.id == tgt_node.id:
+        return f"Source and target are the same symbol: {src_node.name}"
+
+    parent: dict[str, str] = {}
+    queue: deque[tuple[str, int]] = deque([(src_node.id, 0)])
+    visited: set[str] = {src_node.id}
+
+    found = False
+    while queue:
+        current_id, depth = queue.popleft()
+        if depth >= max_depth:
+            continue
+
+        try:
+            callees = storage.get_callees(current_id)
+        except Exception:
+            continue
+
+        for callee in callees:
+            if callee.id in visited:
+                continue
+            visited.add(callee.id)
+            parent[callee.id] = current_id
+
+            if callee.id == tgt_node.id:
+                found = True
+                break
+
+            queue.append((callee.id, depth + 1))
+
+        if found:
+            break
+
+    if not found:
+        return (
+            f"No call path found from '{src_node.name}' to '{tgt_node.name}' "
+            f"within {max_depth} hops."
+        )
+
+    # Reconstruct path
+    path_ids: list[str] = []
+    node_id = tgt_node.id
+    while node_id is not None:
+        path_ids.append(node_id)
+        node_id = parent.get(node_id)
+    path_ids.reverse()
+
+    # Format output
+    hop_count = len(path_ids) - 1
+    path_names = []
+    lines = []
+    for i, nid in enumerate(path_ids, 1):
+        node = storage.get_node(nid)
+        if node:
+            label = node.label.value.title() if node.label else "Unknown"
+            path_names.append(node.name)
+            lines.append(f"  {i}. {node.name} ({label}) — {node.file_path}:{node.start_line}")
+        else:
+            path_names.append(nid)
+            lines.append(f"  {i}. {nid}")
+
+    header = f"Call path: {' → '.join(path_names)} ({hop_count} hop{'s' if hop_count != 1 else ''})"
+    return header + "\n\n" + "\n".join(lines)
+
+
 def handle_communities(
     storage: StorageBackend, community: str | None = None
 ) -> str:
@@ -828,7 +951,8 @@ def handle_review_risk(storage: StorageBackend, diff: str) -> str:
             tags = []
             if deps > 0:
                 tags.append(f"{deps} downstream dependents")
-            lines.append(f"  - {name} ({label}) — {fp}" + (f"  [{', '.join(tags)}]" if tags else ""))
+            tag_str = f"  [{', '.join(tags)}]" if tags else ""
+            lines.append(f"  - {name} ({label}) — {fp}{tag_str}")
     else:
         lines.append("No indexed symbols in changed lines.")
 
@@ -842,5 +966,283 @@ def handle_review_risk(storage: StorageBackend, diff: str) -> str:
         lines.append("")
         lines.append(f"Community boundary crossings: {len(communities_touched)}")
         lines.append(f"  Spans: {', '.join(sorted(communities_touched))}")
+
+    return "\n".join(lines)
+
+
+def handle_file_context(storage: StorageBackend, file_path: str) -> str:
+    """Provide comprehensive context for a single file."""
+    if not file_path or not file_path.strip():
+        return "Error: 'file_path' parameter is required and cannot be empty."
+
+    file_path = file_path.strip()
+    if not _SAFE_PATH.match(file_path):
+        return "Error: file path contains unsafe characters."
+
+    escaped = _escape_cypher(file_path)
+
+    # 1. Symbols defined in this file
+    sym_rows = storage.execute_raw(
+        f"MATCH (n) WHERE n.file_path = '{escaped}' AND n.start_line > 0 "
+        f"RETURN n.name, label(n), n.start_line, n.is_dead, n.is_entry_point, n.is_exported "
+        f"ORDER BY n.start_line"
+    ) or []
+
+    # 2. Imports: files this file imports
+    imports_out = storage.execute_raw(
+        f"MATCH (a:File)-[r:CodeRelation]->(b:File) "
+        f"WHERE a.file_path = '{escaped}' AND r.rel_type = 'imports' "
+        f"RETURN b.file_path ORDER BY b.file_path"
+    ) or []
+
+    # 3. Imported by: files that import this file
+    imports_in = storage.execute_raw(
+        f"MATCH (a:File)-[r:CodeRelation]->(b:File) "
+        f"WHERE b.file_path = '{escaped}' AND r.rel_type = 'imports' "
+        f"RETURN a.file_path ORDER BY a.file_path"
+    ) or []
+
+    # 4. Temporal coupling (top 5)
+    coupling_rows = storage.execute_raw(
+        f"MATCH (a:File)-[r:COUPLED_WITH]-(b:File) "
+        f"WHERE a.file_path = '{escaped}' "
+        f"RETURN b.file_path, r.strength, r.co_changes "
+        f"ORDER BY r.strength DESC LIMIT 5"
+    ) or []
+
+    # 5. Dead code in this file
+    dead_rows = storage.execute_raw(
+        f"MATCH (n) WHERE n.is_dead = true AND n.file_path = '{escaped}' "
+        f"RETURN n.name, n.start_line, label(n)"
+    ) or []
+
+    # 6. Community membership
+    comm_rows = storage.execute_raw(
+        f"MATCH (n)-[r:CodeRelation]->(c:Community) "
+        f"WHERE n.file_path = '{escaped}' AND r.rel_type = 'member_of' "
+        f"RETURN c.name, count(n) ORDER BY count(n) DESC"
+    ) or []
+
+    if not sym_rows and not imports_out and not imports_in:
+        return f"No data found for file '{file_path}'. Is it indexed?"
+
+    lines = [f"File: {file_path}"]
+    lines.append("=" * 48)
+
+    # Symbols section
+    if sym_rows:
+        lines.append("")
+        lines.append(f"Symbols ({len(sym_rows)}):")
+        for row in sym_rows:
+            name = row[0] or "?"
+            label = row[1] or "Unknown"
+            start_line = row[2] or 0
+            is_dead = row[3] if len(row) > 3 else False
+            is_entry = row[4] if len(row) > 4 else False
+            is_exported = row[5] if len(row) > 5 else False
+            tags = []
+            if is_entry:
+                tags.append("entry point")
+            if is_exported:
+                tags.append("exported")
+            if is_dead:
+                tags.append("dead")
+            tag_str = f"  [{', '.join(tags)}]" if tags else ""
+            lines.append(f"  - {name} ({label}) line {start_line}{tag_str}")
+
+    # Imports section
+    if imports_out:
+        out_paths = [r[0] for r in imports_out if r[0]]
+        lines.append("")
+        lines.append(f"Imports ({len(out_paths)}): {', '.join(out_paths)}")
+
+    if imports_in:
+        in_paths = [r[0] for r in imports_in if r[0]]
+        lines.append(f"Imported by ({len(in_paths)}): {', '.join(in_paths)}")
+
+    # Coupling section
+    if coupling_rows:
+        lines.append("")
+        lines.append(f"Coupled files ({len(coupling_rows)}):")
+        for row in coupling_rows:
+            coupled_path = row[0] or "?"
+            strength = row[1] or 0.0
+            co_changes = row[2] or 0
+            lines.append(f"  - {coupled_path}  strength: {strength:.2f}  co_changes: {co_changes}")
+
+    # Dead code section
+    if dead_rows:
+        lines.append("")
+        lines.append(f"Dead code ({len(dead_rows)}):")
+        for row in dead_rows:
+            name = row[0] or "?"
+            start_line = row[1] or 0
+            label = row[2] or "Unknown"
+            lines.append(f"  - {name} ({label}) line {start_line}")
+
+    # Communities section
+    if comm_rows:
+        lines.append("")
+        comm_parts = [f"{r[0]} ({r[1]} symbols)" for r in comm_rows if r[0]]
+        lines.append(f"Communities: {', '.join(comm_parts)}")
+
+    return "\n".join(lines)
+
+
+def handle_cycles(storage: StorageBackend, min_size: int = 2) -> str:
+    """Detect circular dependencies using strongly connected components."""
+    min_size = max(2, min_size)
+
+    try:
+        graph = storage.load_graph()
+    except Exception as exc:
+        return f"Error loading graph: {exc}"
+
+    ig_graph, index_to_node_id = export_to_igraph(graph)
+
+    if ig_graph.vcount() == 0:
+        return "No symbols in the graph to analyze."
+
+    sccs = ig_graph.connected_components(mode="strong")
+
+    cycles = [
+        list(component)
+        for component in sccs
+        if len(component) >= min_size
+    ]
+
+    if not cycles:
+        return "No circular dependencies detected."
+
+    # Sort by size descending (largest cycles first)
+    cycles.sort(key=len, reverse=True)
+
+    lines = [f"Circular Dependencies ({len(cycles)} groups)"]
+    lines.append("=" * 48)
+
+    for i, component in enumerate(cycles, 1):
+        node_ids = [index_to_node_id[idx] for idx in component if idx in index_to_node_id]
+        nodes = [graph.get_node(nid) for nid in node_ids]
+        nodes = [n for n in nodes if n is not None]
+
+        severity = "CRITICAL" if len(nodes) >= 5 else ""
+        size_label = f" — {severity}" if severity else ""
+        lines.append(f"\nCycle {i} ({len(nodes)} symbols){size_label}:")
+        for node in nodes:
+            label = node.label.value.title() if node.label else "Unknown"
+            lines.append(
+                f"  - {node.name} ({label}) — "
+                f"{node.file_path}:{node.start_line}"
+            )
+
+    return "\n".join(lines)
+
+
+def handle_test_impact(
+    storage: StorageBackend,
+    diff: str = "",
+    symbols: list[str] | None = None,
+) -> str:
+    """Find tests likely affected by code changes."""
+    # Resolve changed symbols from diff or symbol list
+    changed_symbol_ids: list[tuple[str, str]] = []  # (node_id, name)
+
+    if diff and diff.strip():
+        changed_files = _parse_diff_files(diff)
+        for file_path, ranges in changed_files.items():
+            if not _SAFE_PATH.match(file_path):
+                continue
+            escaped = _escape_cypher(file_path)
+            rows = storage.execute_raw(
+                f"MATCH (n) WHERE n.file_path = '{escaped}' "
+                f"AND n.start_line > 0 "
+                f"RETURN n.id, n.name, n.start_line, n.end_line"
+            ) or []
+            for row in rows:
+                node_id = row[0] or ""
+                name = row[1] or ""
+                start_line = row[2] or 0
+                end_line = row[3] or 0
+                hit = any(start_line <= end and end_line >= start for start, end in ranges)
+                if hit:
+                    changed_symbol_ids.append((node_id, name))
+
+    elif symbols:
+        for sym_name in symbols:
+            results = _resolve_symbol(storage, sym_name)
+            if results:
+                node = storage.get_node(results[0].node_id)
+                if node:
+                    changed_symbol_ids.append((node.id, node.name))
+
+    else:
+        return "Error: provide either 'diff' or 'symbols' parameter."
+
+    if not changed_symbol_ids:
+        return "No changed symbols found."
+
+    # BFS callers for each changed symbol, collect test hits
+    # {test_file: [(test_name, source_sym, depth)]}
+    test_hits: dict[str, list[tuple[str, str, int]]] = {}
+
+    for sym_id, sym_name in changed_symbol_ids:
+        try:
+            callers_with_depth = storage.traverse_with_depth(sym_id, 4, direction="callers")
+        except Exception:
+            continue
+
+        for caller, depth in callers_with_depth:
+            if _is_test_file(caller.file_path):
+                test_hits.setdefault(caller.file_path, []).append(
+                    (caller.name, sym_name, depth)
+                )
+
+    if not test_hits:
+        return (
+            f"No test files found in the call graph of {len(changed_symbol_ids)} "
+            f"changed symbol(s). Tests may not directly call these symbols."
+        )
+
+    # Format output
+    lines = ["Test Impact Analysis"]
+    lines.append("=" * 48)
+    lines.append(f"Changed symbols: {len(changed_symbol_ids)}")
+    lines.append("")
+
+    # Split by confidence: direct (depth 1-2) vs transitive (depth 3+)
+    direct_files: dict[str, list[tuple[str, str, int]]] = {}
+    transitive_files: dict[str, list[tuple[str, str, int]]] = {}
+
+    for test_file, hits in sorted(test_hits.items()):
+        for test_name, source_sym, depth in hits:
+            if depth <= 2:
+                direct_files.setdefault(test_file, []).append((test_name, source_sym, depth))
+            else:
+                transitive_files.setdefault(test_file, []).append((test_name, source_sym, depth))
+
+    total_tests = sum(len(v) for v in test_hits.values())
+
+    if direct_files:
+        lines.append(f"Affected tests ({total_tests}):")
+        for test_file, hits in sorted(direct_files.items()):
+            lines.append(f"  {test_file}:")
+            seen = set()
+            for test_name, source_sym, depth in hits:
+                key = (test_name, source_sym)
+                if key not in seen:
+                    seen.add(key)
+                    lines.append(f"    - {test_name} (calls: {source_sym})")
+        lines.append("")
+
+    if transitive_files:
+        lines.append("Tests with indirect coverage (depth 3+):")
+        for test_file, hits in sorted(transitive_files.items()):
+            lines.append(f"  {test_file}:")
+            seen = set()
+            for test_name, source_sym, depth in hits:
+                key = (test_name, source_sym)
+                if key not in seen:
+                    seen.add(key)
+                    lines.append(f"    - {test_name} (transitive via: {source_sym})")
 
     return "\n".join(lines)

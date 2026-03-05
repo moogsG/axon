@@ -1,6 +1,6 @@
 """MCP server for Axon — exposes code intelligence tools over stdio transport.
 
-Registers eleven tools and three resources that give AI agents and MCP clients
+Registers fifteen tools and three resources that give AI agents and MCP clients
 access to the Axon knowledge graph.  The server lazily initialises a
 :class:`KuzuBackend` from the ``.axon/kuzu`` directory in the current
 working directory.
@@ -31,17 +31,21 @@ from axon.core.storage.kuzu_backend import KuzuBackend
 from axon.mcp.resources import get_dead_code_list, get_overview, get_schema
 from axon.mcp.tools import (
     MAX_TRAVERSE_DEPTH,
+    handle_call_path,
     handle_communities,
     handle_context,
     handle_coupling,
+    handle_cycles,
     handle_cypher,
     handle_dead_code,
     handle_detect_changes,
     handle_explain,
+    handle_file_context,
     handle_impact,
     handle_list_repos,
     handle_query,
     handle_review_risk,
+    handle_test_impact,
 )
 
 logger = logging.getLogger(__name__)
@@ -294,6 +298,90 @@ TOOLS: list[Tool] = [
             "required": ["diff"],
         },
     ),
+    Tool(
+        name="axon_call_path",
+        description=(
+            "Find the shortest call chain between two symbols. "
+            "Uses BFS over CALLS edges."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "from_symbol": {
+                    "type": "string",
+                    "description": "Name of the source symbol.",
+                },
+                "to_symbol": {
+                    "type": "string",
+                    "description": "Name of the target symbol.",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": f"Maximum hops (default 10, max {MAX_TRAVERSE_DEPTH}).",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": MAX_TRAVERSE_DEPTH,
+                },
+            },
+            "required": ["from_symbol", "to_symbol"],
+        },
+    ),
+    Tool(
+        name="axon_file_context",
+        description=(
+            "Get comprehensive context for a file: symbols, imports, "
+            "coupling, dead code, and community membership in one call."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to the file to analyze.",
+                },
+            },
+            "required": ["file_path"],
+        },
+    ),
+    Tool(
+        name="axon_test_impact",
+        description=(
+            "Find tests likely affected by code changes. Accepts a git diff "
+            "or symbol names, traces callers to find test files."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "diff": {
+                    "type": "string",
+                    "description": "Raw git diff output.",
+                },
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of symbol names to check.",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="axon_cycles",
+        description=(
+            "Detect circular dependencies using strongly connected "
+            "component analysis. Returns cycle groups sorted by size."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "min_size": {
+                    "type": "integer",
+                    "description": "Minimum cycle size to report (default 2).",
+                    "default": 2,
+                    "minimum": 2,
+                },
+            },
+        },
+    ),
 ]
 
 @server.list_tools()
@@ -327,6 +415,25 @@ def _dispatch_tool(name: str, arguments: dict, storage: KuzuBackend) -> str:
         return handle_explain(storage, arguments.get("symbol", ""))
     elif name == "axon_review_risk":
         return handle_review_risk(storage, arguments.get("diff", ""))
+    elif name == "axon_call_path":
+        return handle_call_path(
+            storage,
+            arguments.get("from_symbol", ""),
+            arguments.get("to_symbol", ""),
+            max_depth=arguments.get("max_depth", 10),
+        )
+    elif name == "axon_file_context":
+        return handle_file_context(storage, arguments.get("file_path", ""))
+    elif name == "axon_test_impact":
+        return handle_test_impact(
+            storage,
+            diff=arguments.get("diff", ""),
+            symbols=arguments.get("symbols"),
+        )
+    elif name == "axon_cycles":
+        return handle_cycles(
+            storage, min_size=arguments.get("min_size", 2),
+        )
     else:
         return f"Unknown tool: {name}"
 
