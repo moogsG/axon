@@ -19,7 +19,6 @@ class AxonRuntime:
     watch: bool = False
     lock: asyncio.Lock | None = None
     host_url: str | None = None
-    mcp_url: str | None = None
     owns_storage: bool = True
     event_listeners: list[asyncio.Queue[Any]] | None = field(default=None)
 

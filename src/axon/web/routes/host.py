@@ -13,7 +13,6 @@ def get_host_info(request: Request) -> dict:
     return {
         "repoPath": str(request.app.state.repo_path) if request.app.state.repo_path else None,
         "hostUrl": getattr(request.app.state, "host_url", None),
-        "mcpUrl": getattr(request.app.state, "mcp_url", None),
         "watch": getattr(request.app.state, "watch", False),
         "mode": getattr(request.app.state, "mode", "standalone"),
     }

@@ -20,7 +20,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
 from axon.core.storage.kuzu_backend import KuzuBackend
-from axon.mcp.server import create_streamable_http_app
 from axon.runtime import AxonRuntime
 from axon.web.routes.analysis import router as analysis_router
 from axon.web.routes.cypher import router as cypher_router
@@ -44,9 +43,7 @@ def create_app(
     watch: bool = False,
     dev: bool = False,
     runtime: AxonRuntime | None = None,
-    mount_mcp: bool = False,
     host_url: str | None = None,
-    mcp_url: str | None = None,
     mount_frontend: bool = True,
 ) -> FastAPI:
     """Build and return a fully configured FastAPI application.
@@ -68,29 +65,18 @@ def create_app(
             repo_path=repo_path,
             watch=watch,
             host_url=host_url,
-            mcp_url=mcp_url,
             owns_storage=True,
         )
     else:
         runtime.repo_path = repo_path if repo_path is not None else runtime.repo_path
         runtime.watch = watch
         runtime.host_url = host_url or runtime.host_url
-        runtime.mcp_url = mcp_url or runtime.mcp_url
         if runtime.event_listeners is None and watch:
             runtime.event_listeners = []
 
-    session_manager = None
-    streamable_http_app = None
-    if mount_mcp:
-        session_manager, streamable_http_app = create_streamable_http_app()
-
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if session_manager is not None:
-            async with session_manager.run():
-                yield
-        else:
-            yield
+        yield
         if runtime.owns_storage:
             runtime.storage.close()
             logger.info("Storage backend closed")
@@ -108,8 +94,7 @@ def create_app(
     app.state.event_listeners = runtime.event_listeners
     app.state.watch = runtime.watch
     app.state.host_url = runtime.host_url
-    app.state.mcp_url = runtime.mcp_url
-    app.state.mode = "host" if mount_mcp else "standalone"
+    app.state.mode = "standalone"
 
     app.add_middleware(
         CORSMiddleware,
@@ -128,9 +113,6 @@ def create_app(
     app.include_router(diff_router, prefix="/api")
     app.include_router(processes_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
-
-    if streamable_http_app is not None:
-        app.router.routes.append(Route("/mcp", endpoint=streamable_http_app))
 
     if mount_frontend and not dev and FRONTEND_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

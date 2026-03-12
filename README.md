@@ -80,25 +80,18 @@ cd your-project && axon analyze .  # 2. Index (one command, ~5s for most repos)
 axon ui                       # 3. Explore visually at localhost:8420
 ```
 
-**For AI agents** — add to `.mcp.json` in your project root:
+**For AI agents** (OpenCode skill):
 
-```json
-{
-  "mcpServers": {
-    "axon": {
-      "command": "axon",
-      "args": ["serve", "--watch"]
-    }
-  }
-}
+```bash
+cp -r skills/axon ~/.config/opencode/skills/axon
+# Then load the skill in your agent session
 ```
 
 **For developers** — explore the graph yourself:
 
 ```bash
-axon ui                      # Interactive dashboard (standalone or attaches to running host)
+axon ui                      # Interactive dashboard at localhost:8420
 axon ui --watch              # Live reload on file changes
-axon host --watch            # Shared host: UI + multi-session MCP
 ```
 
 ---
@@ -257,73 +250,41 @@ Axon builds deep structural understanding through 12 sequential analysis phases:
 
 ---
 
-## MCP Integration
+## Skill Interface
 
-Axon exposes its full intelligence as an MCP server. Set it up once, and your AI agent has structural understanding of your codebase forever.
+Axon is designed to be used as an AI agent skill — the agent runs CLI commands directly rather than using MCP protocol.
 
-### Setup
-
-**Claude Code** — add to `.mcp.json` in your project root (or run `claude mcp add axon -- axon serve --watch`):
-
-```json
-{
-  "mcpServers": {
-    "axon": {
-      "command": "axon",
-      "args": ["serve", "--watch"]
-    }
-  }
-}
-```
-
-**Cursor** — add to your MCP settings:
-
-```json
-{
-  "axon": {
-    "command": "axon",
-    "args": ["serve", "--watch"]
-  }
-}
-```
-
-Optional new feature:
+Copy the skill file to your OpenCode skills directory:
 
 ```bash
-axon host --watch
+mkdir -p ~/.config/opencode/skills/axon
+cp skills/axon/SKILL.md ~/.config/opencode/skills/axon/
 ```
 
-This starts a shared host for the UI and multiple MCP clients. `axon setup --claude` / `axon setup --cursor` still prints the standard config.
+The skill teaches the agent:
+- When to use axon (before modifying code, when exploring unfamiliar code)
+- Which command for which situation (decision tree)
+- How to interpret output (confidence scores, depth groups)
+- Worktree behavior (automatic, no configuration)
 
-The `--watch` flag enables live re-indexing — the graph updates as you edit code.
+### Commands
 
-### Tools
+| Command | What the agent gets |
+|---------|---------------------|
+| `axon query` | Hybrid search (BM25 + vector + fuzzy) with results grouped by execution flow |
+| `axon context` | 360-degree view — callers, callees, type refs, confidence tags, dead code status |
+| `axon impact` | Blast radius grouped by depth — direct (will break), indirect (may break), transitive |
+| `axon dead-code` | All unreachable symbols grouped by file |
+| `axon diff` | Structural branch comparison at the symbol level |
+| `axon cypher` | Read-only Cypher queries against the knowledge graph |
 
-| Tool | What the agent gets |
-|------|-------------|
-| `axon_query` | Hybrid search (BM25 + vector + fuzzy) with results grouped by execution flow |
-| `axon_context` | 360-degree view — callers, callees, type refs, confidence tags, dead code status |
-| `axon_impact` | Blast radius grouped by depth — direct (will break), indirect (may break), transitive |
-| `axon_dead_code` | All unreachable symbols grouped by file |
-| `axon_detect_changes` | Map a `git diff` to affected symbols and execution flows |
-| `axon_list_repos` | All indexed repositories with stats |
-| `axon_cypher` | Read-only Cypher queries against the knowledge graph |
-
-Every tool response includes a **next-step hint** guiding the agent through a natural investigation workflow:
+Every command output includes a **next-step hint** guiding the agent through a natural investigation workflow:
 
 ```
-query   -> "Next: Use context() on a specific symbol for the full picture."
-context -> "Next: Use impact() if planning changes to this symbol."
+query   -> "Next: Use 'axon context SYMBOL' for the full picture."
+context -> "Next: Use 'axon impact SYMBOL' if planning changes."
 impact  -> "Tip: Review each affected symbol before making changes."
 ```
-
-### Resources
-
-| URI | Description |
-|-----|-------------|
-| `axon://overview` | Node and relationship counts by type |
-| `axon://dead-code` | Full dead code report |
-| `axon://schema` | Graph schema reference for Cypher queries |
 
 ---
 
@@ -365,7 +326,7 @@ Cypher queries are validated server-side — write keywords (`CREATE`, `DELETE`,
 | Community detection | No | No | No | Yes (Leiden algorithm) |
 | Change coupling (git) | No | No | No | Yes (6-month co-change analysis) |
 | Impact analysis | No | No | No | Yes (depth-grouped with confidence) |
-| AI agent integration | No | Partial | N/A | Yes (full MCP server) |
+| AI agent integration | No | Partial | N/A | Yes (CLI skill interface) |
 | Structural branch diff | No | No | No | Yes (node/edge level) |
 | Watch mode | No | Yes | No | Yes (Rust-based, 500ms debounce) |
 | Works offline | Yes | Yes | No | Yes |
@@ -415,6 +376,33 @@ npm install && npm run build
 
 ---
 
+## Git Worktrees
+
+Axon automatically detects git worktrees and uses the main repository's database. No configuration required.
+
+```bash
+# Index from main repo
+cd ~/workspace/myproject
+axon analyze .
+
+# Work in a worktree — uses the same database automatically
+cd ~/workspace/myproject/trees/feature-branch
+axon context UserService    # Uses ~/workspace/myproject's index
+axon impact validate_user   # Same database
+```
+
+Watch mode must be run from the main repo root (worktrees share the database, so only one watcher can run at a time):
+
+```bash
+cd ~/workspace/myproject
+axon watch    # OK — main repo
+
+cd ~/workspace/myproject/trees/feature-branch
+axon watch    # Error — use axon analyze . instead
+```
+
+---
+
 ## CLI Reference
 
 ```
@@ -440,26 +428,12 @@ axon cypher QUERY            Execute a raw Cypher query (read-only)
 axon watch                   Watch mode — live re-indexing on file changes
 axon diff BASE..HEAD         Structural branch comparison
 
-axon host                    Shared host for UI + HTTP MCP (default: localhost:8420)
-    --port / -p PORT         Port to serve on (default: 8420)
-    --watch / --no-watch     Enable live file watching
-    --dev                    Dev mode — proxy to Vite dev server for HMR
-    --no-open                Don't auto-open browser
-
 axon ui                      Launch the web UI (default: localhost:8420)
     --port / -p PORT         Port to serve on (default: 8420)
     --watch / -w             Enable live file watching with auto-reindex
     --dev                    Dev mode — proxy to Vite dev server for HMR
     --no-open                Don't auto-open browser
-    --direct                 Force standalone mode even if a shared host exists
 
-axon setup                   Print MCP configuration JSON
-    --claude                 For Claude Code
-    --cursor                 For Cursor
-
-axon mcp                     Start the MCP server (stdio transport)
-axon serve                   Start the MCP server
-    --watch, -w              Enable live file watching with auto-reindex
 axon --version               Print version
 ```
 
@@ -576,16 +550,18 @@ Source Code (.py, .ts, .js, .tsx, .jsx)
                        |
               StorageBackend Protocol
                        |
+              ~/.axon/repos/{repo}/
+                       |
            +-----------+-----------+
-           v           v           v
-     +----------+ +----------+ +----------+
-     |   MCP    | |  Web UI  | |   CLI    |
-     |  Server  | | (FastAPI | | (Typer)  |
-     | (stdio)  | |  + React)| |          |
-     +----+-----+ +----+-----+ +----+-----+
-          |             |            |
-     Claude Code    Browser      Terminal
-     / Cursor      (developer)  (developer)
+           v                       v
+     +----------+            +----------+
+     |  Web UI  |            |   CLI    |
+     | (FastAPI |            | (Typer)  |
+     |  + React)|            |          |
+     +----+-----+            +----+-----+
+          |                       |
+      Browser                 Terminal
+     (developer)          (developer + AI agents)
 ```
 
 ### Tech Stack
@@ -596,7 +572,6 @@ Source Code (.py, .ts, .js, .tsx, .jsx)
 | Graph Storage | KuzuDB | Embedded graph database with Cypher, FTS, and vector support |
 | Graph Algorithms | igraph + leidenalg | Leiden community detection |
 | Embeddings | fastembed | ONNX-based 384-dim vectors (~100MB, no PyTorch) |
-| MCP Protocol | mcp SDK (FastMCP) | AI agent communication via stdio |
 | Web Backend | FastAPI + Uvicorn | REST API for the web UI, SSE for live updates |
 | Web Frontend | React + TypeScript + Vite | Interactive dashboard with Tailwind CSS |
 | Graph Visualization | Sigma.js + Graphology | WebGL graph rendering with ForceAtlas2 layout |
@@ -606,18 +581,17 @@ Source Code (.py, .ts, .js, .tsx, .jsx)
 
 ### Storage
 
-Everything lives locally:
+Everything lives locally in a centralized location, keeping your repository directories clean:
 
 ```
-your-project/
-+-- .axon/
-    +-- kuzu/          # KuzuDB graph database (graph + FTS + vectors)
-    +-- meta.json      # Index metadata and stats
+~/.axon/
+└── repos/
+    └── your-project/
+        ├── kuzu/          # KuzuDB graph database
+        └── meta.json      # Index metadata and stats
 ```
 
-Add `.axon/` to your `.gitignore`.
-
-A global registry at `~/.axon/repos/` is automatically populated on `axon analyze`, enabling `axon list` to discover all indexed repositories across your machine.
+Your repository directories remain clean — no `.axon/` folder to gitignore. The global registry at `~/.axon/repos/` is automatically populated on `axon analyze`, enabling `axon list` to discover all indexed repositories across your machine.
 
 The storage layer is abstracted behind a `StorageBackend` Protocol — KuzuDB is the default, with an optional Neo4j backend available via `pip install axoniq[neo4j]`.
 
