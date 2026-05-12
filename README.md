@@ -367,6 +367,53 @@ uv sync --all-extras
 uv run axon --help
 ```
 
+### Install Locally From This Repository
+
+If you want to install the CLI directly from a local checkout (for example on your own machine), use one of these options from the repo root:
+
+```bash
+# Option 1: Editable install (best for local development)
+pip install -e .
+
+# Option 2: Editable install with optional Neo4j support
+pip install -e .[neo4j]
+
+# Option 3: Editable install with uv-managed environment
+uv pip install -e .
+
+# Option 4: Editable install with uv + Neo4j support
+uv pip install -e ".[neo4j]"
+
+# Verify
+axon --help
+```
+
+Using `-e` (editable mode) means changes in this repository are reflected immediately without reinstalling.
+
+### Run in Production Mode
+
+Use the packaged (non-dev) UI/server mode in local or deployed environments:
+
+```bash
+# Index your project
+axon analyze .
+
+# Start production UI server (serves built frontend)
+axon ui
+
+# Optional: custom host/port
+axon ui --host 0.0.0.0 --port 8420
+```
+
+If you're using `uv` commands directly from this repo, the equivalent is:
+
+```bash
+uv run axon analyze .
+uv run axon ui --host 0.0.0.0 --port 8420
+```
+
+Use `axon ui --dev` only for frontend development with Vite HMR.
+
 To rebuild the frontend after making changes (requires Node.js 18+):
 
 ```bash
